@@ -34,7 +34,7 @@ Ensure you have Python installed (>= 3.11).
 ### Steps to Install
 1. Clone the repository:
    ```sh
-   git clone https://github.com/your-username/your-repo.git
+   git clone https://github.com/stephanHypatos/hycutover
    cd your-repo
    ```
 2. Install the required dependencies:
