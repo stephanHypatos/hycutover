@@ -1,7 +1,7 @@
 # Project Copy and Compare Streamlit App
 
 ## Overview
-This is a Streamlit-based web application that provides functionalities for comparing schemas at a detailed level and copying projects between two companies using API authentication. The app consists of two main functionalities:
+This is a Streamlit-based web application that provides functionalities for comparing schemas at a detailed level and copying projects within one or between two companies using API authentication. The app consists of two main functionalities:
 
 1. **Schema Comparison**
    - Authenticates source and target company credentials.
@@ -11,7 +11,7 @@ This is a Streamlit-based web application that provides functionalities for comp
 2. **Project Copying**
    - Copies projects from a source company to a target company.
    - Allows specifying a new extraction model ID.
-   - Supports copying routing rules between projects.
+   - Supports cloning routing rules of projects.
 
 ## Features
 - Secure API authentication using `HypatosAPI`.
@@ -29,7 +29,7 @@ This is a Streamlit-based web application that provides functionalities for comp
 
 ## Installation
 ### Prerequisites
-Ensure you have Python installed (>= 3.7).
+Ensure you have Python installed (>= 3.11).
 
 ### Steps to Install
 1. Clone the repository:
@@ -78,5 +78,5 @@ Modify `config.py` to set the `BASE_URL` for API requests.
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Contact
-For any issues or feature requests, open an issue on the GitHub repository or contact the developer at [your-email@example.com].
+For any issues or feature requests, open an issue on the GitHub repository.
 

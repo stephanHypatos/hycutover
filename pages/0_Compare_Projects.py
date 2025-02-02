@@ -5,7 +5,7 @@ from auth import HypatosAPI
 from config import BASE_URL
 from helpers import input_credentials
 
-st.set_page_config(page_title="Very Low Level Schema Compare", page_icon=":mag:")
+st.set_page_config(page_title="Compare Project Schemas", page_icon=":yin_yang:")
 
 # --- Authentication Section (Always at Top) ---
 def authenticate_credentials():

@@ -5,6 +5,8 @@ from config import BASE_URL
 from helpers import input_credentials,clear_session_state_generic
 
 
+st.set_page_config(page_title="Clone Projects", page_icon=":cyclone:")
+
 # --- Authentication Section (Always at Top) ---
 def authenticate_credentials():
     """Authenticate both source and target credentials and store them separately."""

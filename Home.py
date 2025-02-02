@@ -1,9 +1,9 @@
 import streamlit as st
 
-st.set_page_config(page_title="HyCutOverHelper", page_icon=":clipboard:")
+st.set_page_config(page_title="HyCutOver", page_icon=":haircut:")
 
-st.title("✂️ HYCUTOVER ✂️")
-st.sidebar.success("Select a page above.")
+st.title("✂️ HYCUTOVER")
+st.sidebar.success("Select a page.")
 st.subheader("Introduction")
 st.write(
     """
