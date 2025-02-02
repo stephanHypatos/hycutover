@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from deepdiff import DeepDiff
-from auth import HypatosAPI  # Your authentication class
+from auth import HypatosAPI
 from config import BASE_URL
 from helpers import input_credentials
 
