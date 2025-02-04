@@ -129,6 +129,7 @@ def copy_projects_section():
         st.session_state["project_map"] = project_id_map
         st.subheader("Project ID Mapping")
         st.write(project_id_map)
+        st.write('You can now copy the routing rules: Click Copy Routing Rules on the left')
 
 # --- Copy Routing Rules Section ---
 def copy_routing_rules_section():
