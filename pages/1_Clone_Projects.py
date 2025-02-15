@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 from auth import HypatosAPI  
-from config import BASE_URL
 from helpers import input_credentials,clear_session_state_generic
 
 
@@ -14,6 +13,7 @@ def authenticate_credentials():
     source_pw = st.session_state.get("sourcecompany_apipw", "")
     target_user = st.session_state.get("targetcompany_user", "")
     target_pw = st.session_state.get("targetcompany_apipw", "")
+    base_url = st.session_state.get("base_url", "")
 
     errors = False
     if not source_user or not source_pw:
@@ -25,8 +25,8 @@ def authenticate_credentials():
     if errors:
         return
 
-    source_auth = HypatosAPI(source_user, source_pw, BASE_URL)
-    target_auth = HypatosAPI(target_user, target_pw, BASE_URL)
+    source_auth = HypatosAPI(source_user, source_pw, base_url)
+    target_auth = HypatosAPI(target_user, target_pw, base_url)
     
     if source_auth.authenticate():
         st.success("Source Authentication succeeded!")

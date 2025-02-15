@@ -1,19 +1,24 @@
 import streamlit as st
-
+from config import BASE_URL_EU, BASE_URL_US
 # --- Helper Functions ---
 
 def input_credentials():
     """Display two columns for source and target credentials."""
     st.header("Company Credentials")
+    env_url = st.selectbox(
+    "Select an Env: EU / US",
+    (BASE_URL_EU, BASE_URL_US),
+    key="base_url"
+    )
     col_source, col_target = st.columns(2)
     with col_source:
         st.subheader("Source Company")
-        source_user = st.text_input("Source Company User", key="sourcecompany_user")
-        source_pw = st.text_input("Source Company API Password", type="password", key="sourcecompany_apipw")
+        source_user = st.text_input("Source Company client_id", key="sourcecompany_user")
+        source_pw = st.text_input("Source Company client_secret", type="password", key="sourcecompany_apipw")
     with col_target:
         st.subheader("Target Company")
-        target_user = st.text_input("Target Company User", key="targetcompany_user")
-        target_pw = st.text_input("Target Company API Password", type="password", key="targetcompany_apipw")
+        target_user = st.text_input("Target Company client_id", key="targetcompany_user")
+        target_pw = st.text_input("Target Company client_secret", type="password", key="targetcompany_apipw")
     st.write("If source and target are the same, please enter identical credentials.")
 
 
