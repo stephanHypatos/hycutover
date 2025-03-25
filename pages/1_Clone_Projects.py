@@ -112,7 +112,7 @@ def copy_projects_section():
                     "extractionModelId": new_model_id,
                     "completion": project_details.get("completion", "manual"),
                     "duplicates": project_details.get("duplicates", "allow"),
-                    "members": project_details.get("members", {"allow": "all"}),
+                    "members": {"allow": "all"},
                     "schema": project_schema,
                     "retentionDays": project_details.get("retentionDays", 180)
                 }
