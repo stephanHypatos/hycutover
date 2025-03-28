@@ -57,7 +57,7 @@ class HypatosAPI:
         projects_url = f"{self.base_url}/projects"
         headers = self.get_headers()
         query = {
-            "limit": "50"
+            "limit": "200"
             }
         
         try:
