@@ -151,7 +151,7 @@ def copy_routing_rules_section():
     
     if st.button("Copy Routing Rules"):
         # Retrieve all routing rule IDs using source_auth.
-        rule_ids = source_auth.get_all_routing_rule_ids(limit=20)
+        rule_ids = source_auth.get_all_routing_rule_ids(limit=100)
         
         if rule_ids is None:
             st.error("Failed to retrieve routing rule IDs.")
