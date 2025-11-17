@@ -50,25 +50,50 @@ class HypatosAPI:
             raise ValueError("Authentication is required before making API requests.")
         return {"Authorization": f"{self.token_type} {self.access_token}"}
 
+ 
     def get_projects(self):
         """
-        Retrieves the list of projects.
+        Retrieves ALL projects using pagination.
+        Automatically loops until all projects from the API are fetched.
         """
         projects_url = f"{self.base_url}/projects"
         headers = self.get_headers()
-        query = {
-            "limit": "200"
-            }
-        
+    
+        limit = 50   # API returns max 50 per page
+        offset = 0
+        all_projects = []
+    
         try:
-            response = requests.get(projects_url, headers=headers, params=query)
-            response.raise_for_status()
-            
-            return response.json()
+            while True:
+                params = {
+                    "limit": limit,
+                    "offset": offset
+                }
+    
+                response = requests.get(projects_url, headers=headers, params=params)
+                response.raise_for_status()
+                res_json = response.json()
+    
+                # Extract this batch
+                batch = res_json.get("data", [])
+                total_count = res_json.get("totalCount", len(batch))
+    
+                all_projects.extend(batch)
+    
+                # Check if we've fetched everything
+                if len(all_projects) >= total_count:
+                    break
+    
+                # Increase offset for next batch
+                offset += limit
+    
+            return {"data": all_projects, "totalCount": len(all_projects)}
+    
         except requests.HTTPError as http_err:
             print(f"HTTP error while fetching projects: {http_err}")
         except Exception as err:
             print(f"Unexpected error while fetching projects: {err}")
+    
         return None
 
     def get_project_schema(self, project_id):
