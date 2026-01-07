@@ -1,7 +1,7 @@
 import streamlit as st
 from config import BASE_URL_EU, BASE_URL_US
-# --- Helper Functions ---
 
+# --- Helper Functions ---
 def input_credentials():
     """Display two columns for source and target credentials."""
     st.header("Company Credentials")
@@ -21,7 +21,6 @@ def input_credentials():
         target_pw = st.text_input("Target Company client_secret", type="password", key="targetcompany_apipw")
     st.write("If source and target are the same, please enter identical credentials.")
 
-
 def clear_session_state_generic():
     """
     Displays a multiselect widget with all session state keys and clears
@@ -33,7 +32,6 @@ def clear_session_state_generic():
     if not keys:
         st.info("No session state keys to clear.")
         return
-
     # Let the user select keys to clear
     keys_to_clear = st.multiselect("Select keys to clear", keys)
     if st.button("Clear Selected Keys"):
@@ -41,15 +39,12 @@ def clear_session_state_generic():
             del st.session_state[key]
         st.success("Selected session state keys have been cleared.")
 
-
 def select_project_and_get_schema(auth):
     """
     Displays a selectbox listing all projects retrieved via the provided auth instance.
     When the user selects a project, it retrieves and returns that project's schema.
-
     Args:
         auth: An instance of HypatosAPI (or similar) with methods get_projects() and get_project_schema(project_id).
-
     Returns:
         dict: The schema of the selected project, or None if no project is selected or retrieval fails.
     """
@@ -59,7 +54,6 @@ def select_project_and_get_schema(auth):
     if not projects:
         st.error("No projects found.")
         return None
-
     # Build a list of tuples: (project_id, project_name)
     project_list = [(proj["id"], proj["name"]) for proj in projects]
     
@@ -73,3 +67,43 @@ def select_project_and_get_schema(auth):
     else:
         st.error("Failed to retrieve the project schema.")
     return schema
+
+def get_datapoints_dict(auth, project_id):
+    """
+    Retrieves the schema for a project and extracts datapoints into a dictionary.
+    
+    Args:
+        auth: An instance of HypatosAPI with method get_project_schema(project_id).
+        project_id: The ID of the project to retrieve datapoints from.
+    
+    Returns:
+        dict: A dictionary of datapoints from the schema, or empty dict if retrieval fails.
+    """
+    schema = auth.get_project_schema(project_id)
+    if not schema:
+        return {}
+    
+    # Extract datapoints from schema
+    # Adjust this based on your actual schema structure
+    datapoints = schema.get("datapoints", {})
+    return datapoints
+
+def get_metadata(auth, project_id):
+    """
+    Retrieves the schema for a project and extracts metadata.
+    
+    Args:
+        auth: An instance of HypatosAPI with method get_project_schema(project_id).
+        project_id: The ID of the project to retrieve metadata from.
+    
+    Returns:
+        dict: A dictionary of metadata from the schema, or empty dict if retrieval fails.
+    """
+    schema = auth.get_project_schema(project_id)
+    if not schema:
+        return {}
+    
+    # Extract metadata from schema (everything except datapoints)
+    # Create a copy without datapoints
+    metadata = {k: v for k, v in schema.items() if k != "datapoints"}
+    return metadata
