@@ -61,34 +61,44 @@ def copy_projects_section():
         st.error("Failed to retrieve projects from the source company.")
         return
 
-    project_list = [(proj["id"], proj["name"]) for proj in projects]
-    st.subheader("Select Projects to Copy")
-    selected_projects = st.multiselect("Projects", project_list, format_func=lambda x: x[1])
+    # Retrieve projects from target for model ID selection.
+    target_data = target_auth.get_projects()
+    target_projects = target_data.get("data", [])
+    if not target_projects:
+        st.error("Failed to retrieve projects from the target company.")
+        return
+
     st.subheader("New Project Details")
-    new_model_id = st.text_input("New Extraction Model ID", key="new_model_id")
-    with st.expander("See explanation"):
+    with st.expander("See explanation for Model ID"):
         st.write('''
             How to find the modelId?
 
-            1. You already have a project with the correct model setup, created in the Target Company? 
-               Go to Step 3 else proceed with Step 2.
-            2. Create a new project in the target company with the following parameters:
-                - Choose any projectname
-                - Add a new  Model with the following params: 
-                    - Modeldisplayname: Prompting Service (for standard prompting service projects)
-                    - routing-header-name: invoice-extracter-prompting-service (for standard prompting service projects)
-                - Select a schema
-                - Click create
-            3. Navigate to GetModelID in the left Menu on this page.
-            4. Select the Project.
-            5. Copy the modelId and paste it into 'New Extraction Model ID'.
+            Select a project from the target company that has the correct model setup. If you don't have one, create a new project in the target company with the following parameters:
+            - Choose any "Name" for your Project.
+            - In "Model configuration", select "Hypatos AI Agent";
+            - In Datapoints, select "Invoice EU/US" depending on the region of the project you are setting up;
+            - Click "Next" -> don't change the datapoints structure -> click "Create";
+            Then refresh the page and select that project to get the model ID.
         ''')
-    
-    new_project_name_prefix = st.text_input("Prefix for New Project Names (optional)", key="new_project_name_prefix")
+
+    target_project_list = [(proj["id"], proj["name"]) for proj in target_projects]
+    selected_target_project = st.selectbox("Select Target Project for Model ID", target_project_list, format_func=lambda x: x[1])
+    selected_model_id = None
+    if selected_target_project:
+        for proj in target_projects:
+            if proj["id"] == selected_target_project[0]:
+                selected_model_id = proj.get("extractionModelId")
+                st.write(f"Selected Model ID: {selected_model_id}")
+                break
+
+
+    project_list = [(proj["id"], proj["name"]) for proj in projects]
+    st.subheader("Select Projects to Copy")
+    selected_projects = st.multiselect("Projects", project_list, format_func=lambda x: x[1])
 
     if st.button("Create Project Copies"):
-        if not new_model_id:
-            st.error("Please provide a new Extraction Model ID.")
+        if not selected_target_project or not selected_model_id:
+            st.error("Please select a target project for the model ID.")
             return
         if not selected_projects:
             st.error("Please select at least one project to copy.")
@@ -100,16 +110,13 @@ def copy_projects_section():
             project_details = source_auth.get_project_by_id(project_id)
             project_schema = source_auth.get_project_schema(project_id)
             if project_details and project_schema:
-                if new_project_name_prefix:
-                    final_project_name = f"{new_project_name_prefix}{project_name}"
-                else:
-                    final_project_name = project_name
+                final_project_name = project_name
 
                 new_project_payload = {
                     "name": final_project_name,
                     "note": project_details.get("note", ""),
                     "ocr": project_details.get("ocr", {}),
-                    "extractionModelId": new_model_id,
+                    "extractionModelId": selected_model_id,
                     "completion": project_details.get("completion", "manual"),
                     "duplicates": project_details.get("duplicates", "allow"),
                     "members": {"allow": "all"},
@@ -225,7 +232,7 @@ def main():
     st.sidebar.title("Navigation")
     page = st.sidebar.radio("Select Action", 
                             ["Copy Projects", "Copy Routing Rules", "Get Model ID", "Clear Session State"])
-    
+
     # Always show the credentials input at the top.
     input_credentials()
     if st.button("Authenticate Credentials"):
