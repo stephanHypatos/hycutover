@@ -333,7 +333,7 @@ def clone_schema_to_target_section():
     st.write(
         "Select one or more projects from the source company. "
         "For each selected project, the tool will search for a project with the **exact same name** "
-        "in the target company and copy the schema over."
+        "in the target company and copy the schema and configuration over."
     )
 
     if "source_auth" not in st.session_state or "target_auth" not in st.session_state:
@@ -367,6 +367,50 @@ def clone_schema_to_target_section():
 
     st.write(f"**{len(selected_sources)}** project(s) selected.")
 
+    # --- Configuration clone options ---
+    st.subheader("Configuration Options")
+    config_mode = st.radio(
+        "How should the configuration be handled?",
+        ["Clone as-is from source", "Customize configuration"],
+        key="clone_schema_target_config_mode",
+    )
+
+    # Pre-fill from the first selected source project.
+    first_source_details = source_auth.get_project_by_id(selected_sources[0][0])
+    default_completion = first_source_details.get("completion", "manual") if first_source_details else "manual"
+    default_duplicates = first_source_details.get("duplicates", "allow") if first_source_details else "allow"
+    default_retention = first_source_details.get("retentionDays", 180) if first_source_details else 180
+    default_is_live = first_source_details.get("isLive", False) if first_source_details else False
+
+    if config_mode == "Clone as-is from source":
+        st.info("Configuration will be copied exactly as it is in each source project.")
+    else:
+        st.write("Adjust the configuration values below. These will be applied to **all** matched target projects.")
+        default_completion = st.selectbox(
+            "Completion",
+            ["manual", "automatic"],
+            index=0 if default_completion == "manual" else 1,
+            key="clone_target_completion",
+        )
+        default_duplicates = st.selectbox(
+            "Duplicates",
+            ["allow", "fail"],
+            index=0 if default_duplicates == "allow" else 1,
+            key="clone_target_duplicates",
+        )
+        default_retention = st.number_input(
+            "Retention Days",
+            min_value=1,
+            max_value=3650,
+            value=default_retention,
+            key="clone_target_retention",
+        )
+        default_is_live = st.checkbox(
+            "Is Live",
+            value=default_is_live,
+            key="clone_target_is_live",
+        )
+
     if st.button("Clone Schema to Target"):
         # Fetch target projects and build a name -> project lookup.
         target_data = target_auth.get_projects()
@@ -397,12 +441,27 @@ def clone_schema_to_target_section():
                 continue
 
             payload = {"schema": source_schema}
+
+            # Build config payload.
+            if config_mode == "Clone as-is from source":
+                source_details = source_auth.get_project_by_id(source_id)
+                if source_details:
+                    payload["completion"] = source_details.get("completion", "manual")
+                    payload["duplicates"] = source_details.get("duplicates", "allow")
+                    payload["retentionDays"] = source_details.get("retentionDays", 180)
+                    payload["isLive"] = source_details.get("isLive", False)
+            else:
+                payload["completion"] = default_completion
+                payload["duplicates"] = default_duplicates
+                payload["retentionDays"] = default_retention
+                payload["isLive"] = default_is_live
+
             result = target_auth.update_project(target_id, payload)
             if result:
-                st.success(f"Schema cloned: '{source_name}' (source) -> '{source_name}' (target, ID: {target_id})")
+                st.success(f"Schema & config cloned: '{source_name}' (source) -> '{source_name}' (target, ID: {target_id})")
                 matched += 1
             else:
-                st.error(f"Failed to update schema on target project '{source_name}' (ID: {target_id}).")
+                st.error(f"Failed to update target project '{source_name}' (ID: {target_id}).")
                 failed += 1
 
         st.subheader("Summary")
