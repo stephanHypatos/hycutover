@@ -189,6 +189,25 @@ class HypatosAPI:
             print(f"Unexpected error while fetching routing rule {routing_id}: {err}")
         return None
 
+    def update_project(self, project_id, payload):
+        """
+        Updates a project configuration using PATCH /projects/{id}.
+        Accepts a partial payload with any combination of: name, note, ocr,
+        extractionModelId, completion, duplicates, retentionDays, isLive, members, schema.
+        Returns the updated project on success, or None on failure.
+        """
+        url = f"{self.base_url}/projects/{project_id}"
+        headers = self.get_headers()
+        try:
+            response = requests.patch(url, json=payload, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except requests.HTTPError as http_err:
+            print(f"HTTP error while updating project {project_id}: {http_err}")
+        except Exception as err:
+            print(f"Unexpected error while updating project {project_id}: {err}")
+        return None
+
     def create_routing_rule(self, rule_payload):
         """
         Creates a new routing rule using the /routings endpoint.
