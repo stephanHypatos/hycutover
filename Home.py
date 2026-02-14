@@ -10,6 +10,8 @@ st.write(
     This application allows you to:
     - Compare two project schemas.
     - Clone projects and their attached routing rules.
+    - Update existing project configurations.
+    - Clone configuration or schema between projects across companies.
     """
 )
 
@@ -74,6 +76,24 @@ with st.expander("Documentation"):
         #### Get Model ID
         1. Navigate to "Get Model ID".
         2. Select a project to retrieve its extraction model ID.
+
+        #### Update Project Configuration
+        1. Navigate to "Config Clone & Update".
+        2. Select "Update Configuration".
+        3. Select a project and modify its configuration fields (completion, duplicates, retentionDays, isLive).
+        4. Click "Update Configuration" to apply changes.
+
+        #### Clone Configuration Between Projects
+        1. Navigate to "Config Clone & Update".
+        2. Select "Clone Configuration".
+        3. Select a source project and a target project.
+        4. Click "Clone Configuration" to copy the configuration settings.
+
+        #### Clone Schema Between Projects
+        1. Navigate to "Config Clone & Update".
+        2. Select "Clone Schema".
+        3. Select a source project and a target project.
+        4. Click "Clone Schema" to copy the schema (datapoints structure).
 
         ### Technologies Used
         - **Python**
