@@ -44,91 +44,110 @@ def authenticate_credentials():
 # --- Update Project Configuration ---
 def update_config_section():
     st.title("Update Project Configuration")
-    st.write("Update configuration fields on an existing project.")
+    st.write("Update configuration fields on existing projects.")
 
-    if "target_auth" not in st.session_state:
-        st.error("Please authenticate first.")
+    if "source_auth" not in st.session_state or "target_auth" not in st.session_state:
+        st.error("Please authenticate both source and target companies first.")
         return
 
+    source_auth = st.session_state["source_auth"]
     target_auth = st.session_state["target_auth"]
 
-    # Retrieve projects from target company.
-    data = target_auth.get_projects()
+    # Company selection
+    company_scope = st.selectbox(
+        "Apply changes to",
+        ["Source Company", "Target Company", "Both Companies"],
+        key="update_config_company_scope",
+    )
+
+    # Determine which auth objects to use for fetching projects and applying updates.
+    auth_targets = []
+    if company_scope == "Source Company":
+        auth_targets = [("Source", source_auth)]
+    elif company_scope == "Target Company":
+        auth_targets = [("Target", target_auth)]
+    else:
+        auth_targets = [("Source", source_auth), ("Target", target_auth)]
+
+    # Use the first auth to build the project list for selection.
+    # When "Both Companies", we show source projects (assuming matching projects exist in both).
+    primary_label, primary_auth = auth_targets[0]
+    data = primary_auth.get_projects()
     if not data:
-        st.error("Failed to retrieve projects.")
+        st.error(f"Failed to retrieve projects from {primary_label} Company.")
         return
     projects = data.get("data", [])
     if not projects:
-        st.info("No projects found.")
+        st.info(f"No projects found in {primary_label} Company.")
         return
 
     project_list = [(proj["id"], proj["name"]) for proj in projects]
-    selected_project = st.selectbox(
-        "Select Project to Update",
+    selected_projects = st.multiselect(
+        "Select Projects to Update",
         project_list,
         format_func=lambda x: x[1],
-        key="update_config_project",
+        key="update_config_projects",
     )
 
-    if selected_project:
-        project_details = target_auth.get_project_by_id(selected_project[0])
-        if not project_details:
-            st.error("Failed to retrieve project details.")
-            return
+    if not selected_projects:
+        st.info("Please select at least one project.")
+        return
 
-        st.subheader("Current Configuration")
-        current_completion = project_details.get("completion", "manual")
-        current_duplicates = project_details.get("duplicates", "fail")
-        current_retention = project_details.get("retentionDays", 180)
-        current_is_live = project_details.get("isLive", False)
-
+    # Show current config of the first selected project as reference.
+    first_details = primary_auth.get_project_by_id(selected_projects[0][0])
+    if first_details:
+        st.subheader(f"Current Configuration (from '{selected_projects[0][1]}')")
         col1, col2 = st.columns(2)
         with col1:
-            st.write(f"**Completion:** {current_completion}")
-            st.write(f"**Duplicates:** {current_duplicates}")
+            st.write(f"**Completion:** {first_details.get('completion', 'manual')}")
+            st.write(f"**Duplicates:** {first_details.get('duplicates', 'fail')}")
         with col2:
-            st.write(f"**Retention Days:** {current_retention}")
-            st.write(f"**Is Live:** {current_is_live}")
+            st.write(f"**Retention Days:** {first_details.get('retentionDays', 180)}")
+            st.write(f"**Is Live:** {first_details.get('isLive', False)}")
+        if len(selected_projects) > 1:
+            st.caption("Note: The values above are from the first selected project. The new configuration below will be applied to all selected projects.")
 
-        st.subheader("New Configuration")
-        new_completion = st.selectbox(
-            "Completion",
-            ["manual", "automatic"],
-            index=0 if current_completion == "manual" else 1,
-            key="update_completion",
-        )
-        new_duplicates = st.selectbox(
-            "Duplicates",
-            ["allow", "fail"],
-            index=0 if current_duplicates == "allow" else 1,
-            key="update_duplicates",
-        )
-        new_retention = st.number_input(
-            "Retention Days",
-            min_value=1,
-            max_value=3650,
-            value=current_retention,
-            key="update_retention",
-        )
-        new_is_live = st.checkbox(
-            "Is Live",
-            value=current_is_live,
-            key="update_is_live",
-        )
+    st.subheader("New Configuration")
+    new_completion = st.selectbox(
+        "Completion",
+        ["manual", "automatic"],
+        index=0 if first_details and first_details.get("completion") == "manual" else 1,
+        key="update_completion",
+    )
+    new_duplicates = st.selectbox(
+        "Duplicates",
+        ["allow", "fail"],
+        index=0 if first_details and first_details.get("duplicates") == "allow" else 1,
+        key="update_duplicates",
+    )
+    new_retention = st.number_input(
+        "Retention Days",
+        min_value=1,
+        max_value=3650,
+        value=first_details.get("retentionDays", 180) if first_details else 180,
+        key="update_retention",
+    )
+    new_is_live = st.checkbox(
+        "Is Live",
+        value=first_details.get("isLive", False) if first_details else False,
+        key="update_is_live",
+    )
 
-        if st.button("Update Configuration"):
-            payload = {
-                "completion": new_completion,
-                "duplicates": new_duplicates,
-                "retentionDays": new_retention,
-                "isLive": new_is_live,
-            }
-            result = target_auth.update_project(selected_project[0], payload)
-            if result:
-                st.success(f"Project '{selected_project[1]}' updated successfully!")
-                st.json(result)
-            else:
-                st.error(f"Failed to update project '{selected_project[1]}'.")
+    if st.button("Update Configuration"):
+        payload = {
+            "completion": new_completion,
+            "duplicates": new_duplicates,
+            "retentionDays": new_retention,
+            "isLive": new_is_live,
+        }
+
+        for project_id, project_name in selected_projects:
+            for label, auth in auth_targets:
+                result = auth.update_project(project_id, payload)
+                if result:
+                    st.success(f"[{label}] Project '{project_name}' updated successfully!")
+                else:
+                    st.error(f"[{label}] Failed to update project '{project_name}'.")
 
 
 # --- Clone Configuration ---
