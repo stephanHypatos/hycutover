@@ -327,6 +327,88 @@ def clone_schema_section():
             )
 
 
+# --- Clone Schema to Target (by name matching) ---
+def clone_schema_to_target_section():
+    st.title("Clone Schema to Target")
+    st.write(
+        "Select one or more projects from the source company. "
+        "For each selected project, the tool will search for a project with the **exact same name** "
+        "in the target company and copy the schema over."
+    )
+
+    if "source_auth" not in st.session_state or "target_auth" not in st.session_state:
+        st.error("Both source and target authentication must be completed.")
+        return
+
+    source_auth = st.session_state["source_auth"]
+    target_auth = st.session_state["target_auth"]
+
+    # Source projects
+    source_data = source_auth.get_projects()
+    if not source_data:
+        st.error("Failed to retrieve source projects.")
+        return
+    source_projects = source_data.get("data", [])
+    if not source_projects:
+        st.info("No source projects found.")
+        return
+
+    source_list = [(p["id"], p["name"]) for p in source_projects]
+    selected_sources = st.multiselect(
+        "Select Source Projects",
+        source_list,
+        format_func=lambda x: x[1],
+        key="clone_schema_target_sources",
+    )
+
+    if not selected_sources:
+        st.info("Please select at least one source project.")
+        return
+
+    st.write(f"**{len(selected_sources)}** project(s) selected.")
+
+    if st.button("Clone Schema to Target"):
+        # Fetch target projects and build a name -> project lookup.
+        target_data = target_auth.get_projects()
+        if not target_data:
+            st.error("Failed to retrieve target projects.")
+            return
+        target_projects = target_data.get("data", [])
+        target_by_name = {}
+        for p in target_projects:
+            target_by_name[p["name"]] = p
+
+        matched = 0
+        skipped = 0
+        failed = 0
+
+        for source_id, source_name in selected_sources:
+            target_project = target_by_name.get(source_name)
+            if not target_project:
+                st.warning(f"No matching project found in target company for '{source_name}'. Skipped.")
+                skipped += 1
+                continue
+
+            target_id = target_project["id"]
+            source_schema = source_auth.get_project_schema(source_id)
+            if not source_schema:
+                st.error(f"Failed to retrieve schema from source project '{source_name}'.")
+                failed += 1
+                continue
+
+            payload = {"schema": source_schema}
+            result = target_auth.update_project(target_id, payload)
+            if result:
+                st.success(f"Schema cloned: '{source_name}' (source) -> '{source_name}' (target, ID: {target_id})")
+                matched += 1
+            else:
+                st.error(f"Failed to update schema on target project '{source_name}' (ID: {target_id}).")
+                failed += 1
+
+        st.subheader("Summary")
+        st.write(f"**Cloned:** {matched} | **Skipped (no match):** {skipped} | **Failed:** {failed}")
+
+
 # --- Main Navigation ---
 def main():
     st.sidebar.title("Navigation")
@@ -336,6 +418,7 @@ def main():
             "Update Configuration",
             "Clone Configuration",
             "Clone Schema",
+            "Clone Schema to Target",
             "Clear Session State",
         ],
     )
@@ -351,6 +434,8 @@ def main():
         clone_config_section()
     elif page == "Clone Schema":
         clone_schema_section()
+    elif page == "Clone Schema to Target":
+        clone_schema_to_target_section()
     elif page == "Clear Session State":
         clear_session_state_generic()
 
