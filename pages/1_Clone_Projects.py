@@ -276,6 +276,11 @@ def clone_by_project_setup_section():
 
     tag = "[A]" if setup == "Setup A" else "[B]"
 
+    # Reset multiselect when setup type changes so the default re-applies.
+    if st.session_state.get("_prev_setup_type") != setup:
+        st.session_state["_prev_setup_type"] = setup
+        st.session_state.pop("setup_selected_projects", None)
+
     # Auto-select projects matching the tag.
     project_list = [(proj["id"], proj["name"]) for proj in projects]
     auto_selected = [p for p in project_list if tag in p[1]]
