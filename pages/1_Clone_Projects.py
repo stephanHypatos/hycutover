@@ -280,6 +280,7 @@ def clone_by_project_setup_section():
     if st.session_state.get("_prev_setup_type") != setup:
         st.session_state["_prev_setup_type"] = setup
         st.session_state.pop("setup_selected_projects", None)
+        st.rerun()
 
     # Auto-select projects matching the tag.
     project_list = [(proj["id"], proj["name"]) for proj in projects]
