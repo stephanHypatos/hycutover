@@ -276,25 +276,15 @@ def clone_by_project_setup_section():
 
     tag = "[A]" if setup == "Setup A" else "[B]"
 
-    # Reset multiselect when setup type changes so the default re-applies.
-    if st.session_state.get("_prev_setup_type") != setup:
-        st.session_state["_prev_setup_type"] = setup
-        st.session_state.pop("setup_selected_projects", None)
-        st.rerun()
+    # Find projects matching the selected setup tag.
+    selected_projects = [(proj["id"], proj["name"]) for proj in projects if tag in proj["name"]]
 
-    # Auto-select projects matching the tag.
-    project_list = [(proj["id"], proj["name"]) for proj in projects]
-    auto_selected = [p for p in project_list if tag in p[1]]
-
-    st.subheader("Projects to Copy")
-    selected_projects = st.multiselect(
-        "Projects",
-        project_list,
-        default=auto_selected,
-        format_func=lambda x: x[1],
-        key="setup_selected_projects",
-    )
-    st.write(f"**{len(selected_projects)}** project(s) selected.")
+    st.subheader(f"Projects to Copy ({len(selected_projects)})")
+    if selected_projects:
+        for _, name in selected_projects:
+            st.write(f"- {name}")
+    else:
+        st.info(f"No projects found matching tag `{tag}`.")
 
     if st.button("Create Project Copies", key="setup_create_copies"):
         if not selected_target_project or not selected_model_id:
