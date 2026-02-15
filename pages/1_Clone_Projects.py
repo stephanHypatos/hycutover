@@ -194,6 +194,146 @@ def copy_routing_rules_section():
         st.subheader("Routing Rule Mapping (Original ID → New ID)")
         st.write(new_rules_mapping)
 
+# --- Clone by Project Setup Section ---
+ALLOWED_CLIENT_ID = "Lh8CbOZDvxLegwX21aLAjenUCbesYRia"
+
+def clone_by_project_setup_section():
+    st.title("Clone by Project Setup")
+
+    # Gate access by source client_id.
+    source_client_id = st.session_state.get("sourcecompany_user", "")
+    if source_client_id != ALLOWED_CLIENT_ID:
+        st.error("This section is only available when the Source Company client_id is the authorized template account.")
+        return
+
+    if "source_auth" not in st.session_state or "target_auth" not in st.session_state:
+        st.error("Both source and target authentication must be completed.")
+        return
+
+    source_auth = st.session_state["source_auth"]
+    target_auth = st.session_state["target_auth"]
+
+    # Retrieve source projects.
+    data = source_auth.get_projects()
+    if not data:
+        st.error("Failed to retrieve projects from the source company.")
+        return
+    projects = data.get("data", [])
+    if not projects:
+        st.error("No projects found in the source company.")
+        return
+
+    # Retrieve target projects for model ID selection.
+    target_data = target_auth.get_projects()
+    if not target_data:
+        st.error("Failed to retrieve projects from the target company.")
+        return
+    target_projects = target_data.get("data", [])
+    if not target_projects:
+        st.error("No projects found in the target company.")
+        return
+
+    # Model ID selection (same pattern as Copy Projects).
+    st.subheader("New Project Details")
+    with st.expander("See explanation for Model ID"):
+        st.write('''
+            How to find the modelId?
+
+            Select a project from the target company that has the correct model setup. If you don't have one, create a new project in the target company with the following parameters:
+            - Choose any "Name" for your Project.
+            - In "Model configuration", select "Hypatos AI Agent";
+            - In Datapoints, select "Invoice EU/US" depending on the region of the project you are setting up;
+            - Click "Next" -> don't change the datapoints structure -> click "Create";
+            Then refresh the page and select that project to get the model ID.
+        ''')
+
+    target_project_list = [(proj["id"], proj["name"]) for proj in target_projects]
+    selected_target_project = st.selectbox(
+        "Select Target Project for Model ID",
+        target_project_list,
+        format_func=lambda x: x[1],
+        key="setup_model_id_project",
+    )
+    selected_model_id = None
+    if selected_target_project:
+        for proj in target_projects:
+            if proj["id"] == selected_target_project[0]:
+                selected_model_id = proj.get("extractionModelId")
+                st.write(f"Selected Model ID: {selected_model_id}")
+                break
+
+    # Setup selection.
+    st.subheader("Select Project Setup")
+    setup = st.radio(
+        "Choose a setup",
+        ["Setup A", "Setup B"],
+        captions=[
+            "No studio users - documents will not be validated/confirmed by a human in the loop in studio",
+            "Studio users - documents will be validated and confirmed by a human in the loop in studio",
+        ],
+        key="clone_setup_type",
+    )
+
+    tag = "[A]" if setup == "Setup A" else "[B]"
+
+    # Auto-select projects matching the tag.
+    project_list = [(proj["id"], proj["name"]) for proj in projects]
+    auto_selected = [p for p in project_list if tag in p[1]]
+
+    st.subheader("Projects to Copy")
+    selected_projects = st.multiselect(
+        "Projects",
+        project_list,
+        default=auto_selected,
+        format_func=lambda x: x[1],
+        key="setup_selected_projects",
+    )
+    st.write(f"**{len(selected_projects)}** project(s) selected.")
+
+    if st.button("Create Project Copies", key="setup_create_copies"):
+        if not selected_target_project or not selected_model_id:
+            st.error("Please select a target project for the model ID.")
+            return
+        if not selected_projects:
+            st.error("Please select at least one project to copy.")
+            return
+
+        headers = target_auth.get_headers()
+        create_project_url = f"{target_auth.base_url}/projects"
+        project_id_map = {}
+
+        for project_id, project_name in selected_projects:
+            project_details = source_auth.get_project_by_id(project_id)
+            project_schema = source_auth.get_project_schema(project_id)
+            if project_details and project_schema:
+                new_project_payload = {
+                    "name": project_name,
+                    "note": project_details.get("note", ""),
+                    "ocr": project_details.get("ocr", {}),
+                    "extractionModelId": selected_model_id,
+                    "completion": project_details.get("completion", "manual"),
+                    "duplicates": project_details.get("duplicates", "allow"),
+                    "members": {"allow": "all"},
+                    "schema": project_schema,
+                    "retentionDays": project_details.get("retentionDays", 180),
+                }
+                response = requests.post(create_project_url, json=new_project_payload, headers=headers)
+                if response.status_code == 201:
+                    new_project = response.json()
+                    new_project_id = new_project.get("id")
+                    project_id_map[project_id] = new_project_id
+                    st.success(f"Project '{project_name}' created successfully!")
+                else:
+                    st.error(f"Failed to create project '{project_name}'. Status code: {response.status_code}")
+            else:
+                st.error(f"Failed to retrieve details for project '{project_name}'.")
+
+        st.session_state["project_map"] = project_id_map
+        st.subheader("Project ID Mapping")
+        st.write(project_id_map)
+        st.write("You can now copy the routing rules: Click Copy Routing Rules on the left")
+
+
 # ---------- Get Model ID Section ----------
 
 def get_model_id_section():
@@ -230,8 +370,8 @@ def get_model_id_section():
 
 def main():
     st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Select Action", 
-                            ["Copy Projects", "Copy Routing Rules", "Get Model ID", "Clear Session State"])
+    page = st.sidebar.radio("Select Action",
+                            ["Copy Projects", "Clone by Project Setup", "Copy Routing Rules", "Get Model ID", "Clear Session State"])
 
     # Always show the credentials input at the top.
     input_credentials()
@@ -240,10 +380,12 @@ def main():
 
     if page == "Copy Projects":
         copy_projects_section()
+    elif page == "Clone by Project Setup":
+        clone_by_project_setup_section()
     elif page == "Copy Routing Rules":
         copy_routing_rules_section()
     elif page == "Get Model ID":
-        get_model_id_section()        
+        get_model_id_section()
     elif page == "Clear Session State":
         clear_session_state_generic()
 
