@@ -225,3 +225,36 @@ class HypatosAPI:
         except Exception as err:
             print(f"Unexpected error while creating routing rule: {err}")
         return None
+
+    def get_company_info(self, company_id: str = None):
+        """
+        Retrieves company information using the authenticated client's credentials.
+        If company_id is provided, fetches that specific company.
+        If company_id is None, fetches the list of companies (usually returns the authenticated company).
+        Returns a dictionary with company details including name, id, active status, and createdAt.
+        """
+        headers = self.get_headers()
+        try:
+            if company_id:
+                url = f"{self.base_url}/companies/{company_id}"
+                response = requests.get(url, headers=headers)
+            else:
+                # Fetch the list of companies - typically returns the authenticated company
+                url = f"{self.base_url}/companies"
+                response = requests.get(url, headers=headers)
+            
+            response.raise_for_status()
+            data = response.json()
+            
+            # If fetching list, return the first company (authenticated one)
+            if not company_id and isinstance(data, dict) and "data" in data:
+                companies = data.get("data", [])
+                if companies:
+                    return companies[0]
+            
+            return data
+        except requests.HTTPError as http_err:
+            print(f"HTTP error while fetching company info: {http_err}")
+        except Exception as err:
+            print(f"Unexpected error while fetching company info: {err}")
+        return None
