@@ -31,12 +31,24 @@ def authenticate_credentials():
     if source_auth.authenticate():
         st.success("Source Authentication succeeded!")
         st.session_state["source_auth"] = source_auth
+        # Fetch and store source company name
+        source_company = source_auth.get_company_info()
+        if source_company:
+            company_name = source_company.get("name", "Unknown")
+            st.session_state["source_company_name"] = company_name
+            st.info(f"📦 Source Company: **{company_name}**")
     else:
         st.error("Source Authentication failed.")
     
     if target_auth.authenticate():
         st.success("Target Authentication succeeded!")
         st.session_state["target_auth"] = target_auth
+        # Fetch and store target company name
+        target_company = target_auth.get_company_info()
+        if target_company:
+            company_name = target_company.get("name", "Unknown")
+            st.session_state["target_company_name"] = company_name
+            st.info(f"📦 Target Company: **{company_name}**")
     else:
         st.error("Target Authentication failed.")
 

@@ -31,12 +31,24 @@ def authenticate_credentials():
     if source_auth.authenticate():
         st.success("Source Authentication succeeded!")
         st.session_state["source_auth"] = source_auth
+        # Fetch and store source company name
+        source_company = source_auth.get_company_info()
+        if source_company:
+            company_name = source_company.get("name", "Unknown")
+            st.session_state["source_company_name"] = company_name
+            st.info(f"📦 Source Company: **{company_name}**")
     else:
         st.error("Source Authentication failed.")
     
     if target_auth.authenticate():
         st.success("Target Authentication succeeded!")
         st.session_state["target_auth"] = target_auth
+        # Fetch and store target company name
+        target_company = target_auth.get_company_info()
+        if target_company:
+            company_name = target_company.get("name", "Unknown")
+            st.session_state["target_company_name"] = company_name
+            st.info(f"📦 Target Company: **{company_name}**")
     else:
         st.error("Target Authentication failed.")
 
@@ -325,9 +337,57 @@ def clone_by_project_setup_section():
                 st.error(f"Failed to retrieve details for project '{project_name}'.")
 
         st.session_state["project_map"] = project_id_map
-        st.subheader("Project ID Mapping")
-        st.write(project_id_map)
-        st.write("You can now copy the routing rules: Click Copy Routing Rules on the left")
+
+        # Automatically copy routing rules for the mapped projects
+        st.subheader("Copying Routing Rules")
+        new_rules_mapping = {}
+        # Ensure auth objects are present
+        if "source_auth" not in st.session_state or "target_auth" not in st.session_state:
+            st.error("Both source and target authentication are required to copy routing rules.")
+        else:
+            source_auth_local = st.session_state["source_auth"]
+            target_auth_local = st.session_state["target_auth"]
+
+            # Create a reverse mapping for project names
+            project_name_map = {}
+            for orig_id, new_id in project_id_map.items():
+                for proj_id, proj_name in selected_projects:
+                    if proj_id == orig_id:
+                        project_name_map[new_id] = proj_name
+                        break
+
+            rule_ids = source_auth_local.get_all_routing_rule_ids(limit=100)
+            if rule_ids is None:
+                st.error("Failed to retrieve routing rule IDs.")
+            else:
+                for rid in rule_ids:
+                    rule_details = source_auth_local.get_routing_by_id(rid)
+                    if rule_details is None:
+                        st.warning(f"Could not retrieve details for routing rule {rid}")
+                        continue
+                    original_from = rule_details.get("fromProjectId")
+                    original_to = rule_details.get("toProjectId")
+                    # Only process the rule if both IDs are present in the mapping.
+                    if original_from in project_id_map and original_to in project_id_map:
+                        new_from = project_id_map[original_from]
+                        new_to = project_id_map[original_to]
+                        rule_details["fromProjectId"] = new_from
+                        rule_details["toProjectId"] = new_to
+                    else:
+                        continue
+
+                    for field in ["id", "createdAt", "updatedAt"]:
+                        rule_details.pop(field, None)
+
+                    new_rule = target_auth_local.create_routing_rule(rule_details)
+                    if new_rule:
+                        new_rules_mapping[rid] = new_rule.get("id")
+                        # Get project names for the success message
+                        from_project_name = project_name_map.get(new_from, new_from)
+                        to_project_name = project_name_map.get(new_to, new_to)
+                        st.success(f"✅ Successfully copied rule: {from_project_name} → {to_project_name}")
+                    else:
+                        st.error(f"Failed to create new routing rule for original rule {rid}")
 
 
 # ---------- Get Model ID Section ----------
@@ -367,7 +427,7 @@ def get_model_id_section():
 def main():
     st.sidebar.title("Navigation")
     page = st.sidebar.radio("Select Action",
-                            ["Copy Projects", "Clone by Project Setup", "Copy Routing Rules", "Get Model ID", "Clear Session State"])
+                            ["Clone by Project Setup", "Copy Projects", "Copy Routing Rules", "Get Model ID", "Clear Session State"])
 
     # Always show the credentials input at the top.
     input_credentials()
