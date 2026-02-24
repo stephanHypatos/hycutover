@@ -89,9 +89,9 @@ def copy_projects_section():
             Select a project from the target company that has the correct model setup. If you don't have one, create a new project in the target company with the following parameters:
             - Choose any "Name" for your Project.
             - In "Model configuration", select "Hypatos AI Agent";
-            - In Datapoints, select "Invoice EU/US" depending on the region of the project you are setting up;
+            - In Datapoints, always select "Invoice EU" ( it does not matter anyway, as you will delete the project in next 5 minutes anyway )
             - Click "Next" -> don't change the datapoints structure -> click "Create";
-            Then refresh the page and select that project to get the model ID.
+            - Refresh this page and select the project you just created from the dropdown below to get the model ID.
         ''')
 
     target_project_list = [(proj["id"], proj["name"]) for proj in target_projects]
@@ -207,11 +207,11 @@ def copy_routing_rules_section():
         st.subheader("Routing Rule Mapping (Original ID → New ID)")
         st.write(new_rules_mapping)
 
-# --- Clone by Project Setup Section ---
+# --- Clone from Template Company Section ---
 ALLOWED_CLIENT_ID = "Lh8CbOZDvxLegwX21aLAjenUCbesYRia"
 
 def clone_by_project_setup_section():
-    st.title("Clone by Project Setup")
+    st.title("Clone from Template Company Setup")
 
     # Gate access by source client_id.
     source_client_id = st.session_state.get("sourcecompany_user", "")
@@ -423,7 +423,7 @@ def get_model_id_section():
                 st.write("Extraction Model ID:", proj.get("extractionModelId"))
                 break
 
-# --- Credentials helper for Clone by Project Setup (source from secrets) ---
+# --- Credentials helper for Clone from Template Company Setup (source from secrets) ---
 
 def _input_target_credentials_only():
     """Show only target credentials; source credentials are loaded from st.secrets."""
@@ -440,10 +440,10 @@ def _input_target_credentials_only():
 def main():
     st.sidebar.title("Navigation")
     page = st.sidebar.radio("Select Action",
-                            ["Clone by Project Setup", "Copy Projects", "Copy Routing Rules", "Get Model ID", "Clear Session State"])
+                            ["Clone from Template Company Setup", "Copy Projects", "Copy Routing Rules", "Get Model ID", "Clear Session State"])
 
-    # Credentials input: source is pre-loaded from secrets for "Clone by Project Setup".
-    if page == "Clone by Project Setup":
+    # Credentials input: source is pre-loaded from secrets for "Clone from Template Company Setup".
+    if page == "Clone from Template Company Setup":
         st.session_state["sourcecompany_user"] = st.secrets["CLIENT_ID"]
         st.session_state["sourcecompany_apipw"] = st.secrets["CLIENT_SECRET"]
         _input_target_credentials_only()
@@ -454,7 +454,7 @@ def main():
 
     if page == "Copy Projects":
         copy_projects_section()
-    elif page == "Clone by Project Setup":
+    elif page == "Clone from Template Company Setup":
         clone_by_project_setup_section()
     elif page == "Copy Routing Rules":
         copy_routing_rules_section()
