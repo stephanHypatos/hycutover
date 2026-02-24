@@ -1,7 +1,8 @@
 import streamlit as st
 import requests
-from auth import HypatosAPI  
-from helpers import input_credentials,clear_session_state_generic
+from auth import HypatosAPI
+from helpers import input_credentials, clear_session_state_generic
+from config import BASE_URL_EU, BASE_URL_US
 
 
 st.set_page_config(page_title="Clone Projects", page_icon=":cyclone:")
@@ -422,6 +423,18 @@ def get_model_id_section():
                 st.write("Extraction Model ID:", proj.get("extractionModelId"))
                 break
 
+# --- Credentials helper for Clone by Project Setup (source from secrets) ---
+
+def _input_target_credentials_only():
+    """Show only target credentials; source credentials are loaded from st.secrets."""
+    st.header("Company Credentials")
+    st.selectbox("Select an Env: EU / US", (BASE_URL_EU, BASE_URL_US), key="base_url")
+    st.info("Source Company credentials are pre-configured (loaded from secrets).")
+    st.subheader("Target Company")
+    st.text_input("Target Company client_id", key="targetcompany_user")
+    st.text_input("Target Company client_secret", type="password", key="targetcompany_apipw")
+
+
 # --- Main App Navigation ---
 
 def main():
@@ -429,8 +442,13 @@ def main():
     page = st.sidebar.radio("Select Action",
                             ["Clone by Project Setup", "Copy Projects", "Copy Routing Rules", "Get Model ID", "Clear Session State"])
 
-    # Always show the credentials input at the top.
-    input_credentials()
+    # Credentials input: source is pre-loaded from secrets for "Clone by Project Setup".
+    if page == "Clone by Project Setup":
+        st.session_state["sourcecompany_user"] = st.secrets["CLIENT_ID"]
+        st.session_state["sourcecompany_apipw"] = st.secrets["CLIENT_SECRET"]
+        _input_target_credentials_only()
+    else:
+        input_credentials()
     if st.button("Authenticate Credentials"):
         authenticate_credentials()
 
