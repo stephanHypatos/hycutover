@@ -4,7 +4,7 @@ from deepdiff import DeepDiff
 import json
 from io import BytesIO
 from auth import HypatosAPI
-from helpers import get_datapoints_dict, get_metadata
+from helpers import get_datapoints_dict, get_metadata, validate_scopes
 
 st.set_page_config(page_title="Bulk Schema Comparison", layout="wide")
 
@@ -93,10 +93,23 @@ if st.button("🔑 Authenticate Credentials", type="primary"):
             target_auth_success = target_api.authenticate()
             
             if source_auth_success and target_auth_success:
-                st.session_state.source_api = source_api
-                st.session_state.target_api = target_api
-                st.session_state.authenticated = True
-                st.success("✅ Authentication successful!")
+                # Validate scopes for both
+                source_company = source_api.get_company_info()
+                target_company = target_api.get_company_info()
+                
+                source_company_name = source_company.get("name", "Unknown") if source_company else "Unknown"
+                target_company_name = target_company.get("name", "Unknown") if target_company else "Unknown"
+                
+                source_scopes_valid = validate_scopes(source_api, f"Source Company ({source_company_name})")
+                target_scopes_valid = validate_scopes(target_api, f"Target Company ({target_company_name})")
+                
+                if source_scopes_valid and target_scopes_valid:
+                    st.session_state.source_api = source_api
+                    st.session_state.target_api = target_api
+                    st.session_state.authenticated = True
+                    st.success("✅ Authentication successful!")
+                else:
+                    st.session_state.authenticated = False
             else:
                 if not source_auth_success:
                     st.error("❌ Source authentication failed")

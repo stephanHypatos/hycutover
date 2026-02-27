@@ -1,6 +1,9 @@
 import streamlit as st
 from config import BASE_URL_EU, BASE_URL_US
 
+# Required scopes for API operations
+REQUIRED_SCOPES = ["projects.read", "projects.write", "routings.read", "routings.write"]
+
 # --- Helper Functions ---
 def input_credentials():
     """Display two columns for source and target credentials."""
@@ -38,6 +41,29 @@ def clear_session_state_generic():
         for key in keys_to_clear:
             del st.session_state[key]
         st.success("Selected session state keys have been cleared.")
+
+def validate_scopes(auth, company_name: str):
+    """
+    Validates if the authenticated client has all required scopes.
+    Displays appropriate error message if scopes are missing.
+    
+    Args:
+        auth: An instance of HypatosAPI with scope validation methods.
+        company_name: Name of the company (for display purposes).
+    
+    Returns:
+        bool: True if all required scopes are present, False otherwise.
+    """
+    if not auth.has_required_scopes(REQUIRED_SCOPES):
+        missing_scopes = auth.get_missing_scopes(REQUIRED_SCOPES)
+        st.error(
+            f"❌ **{company_name}** is missing required API scopes.\n\n"
+            f"**Missing Scopes:**\n"
+            + "\n".join([f"- {scope}" for scope in missing_scopes]) +
+            f"\n\nPlease contact your administrator to grant these scopes to your API credentials."
+        )
+        return False
+    return True
 
 def select_project_and_get_schema(auth):
     """

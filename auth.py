@@ -13,6 +13,7 @@ class HypatosAPI:
         self.access_token = None
         self.token_type = None
         self.expires_in = None
+        self.scopes = []
 
     def authenticate(self) -> bool:
         """
@@ -35,6 +36,10 @@ class HypatosAPI:
             self.token_type = token_data.get("token_type")
             self.expires_in = token_data.get("expires_in")
             
+            # Extract scopes from token data
+            scopes_str = token_data.get("scope", "")
+            self.scopes = scopes_str.split() if scopes_str else []
+            
             return True
         except requests.HTTPError as http_err:
             print(f"HTTP error during authentication: {http_err}")
@@ -49,6 +54,30 @@ class HypatosAPI:
         if not self.access_token or not self.token_type:
             raise ValueError("Authentication is required before making API requests.")
         return {"Authorization": f"{self.token_type} {self.access_token}"}
+
+    def has_required_scopes(self, required_scopes: list) -> bool:
+        """
+        Validates if the authenticated client has all required scopes.
+        
+        Args:
+            required_scopes: List of required scope strings (e.g., ["projects.read", "projects.write"])
+        
+        Returns:
+            bool: True if all required scopes are present, False otherwise.
+        """
+        return all(scope in self.scopes for scope in required_scopes)
+
+    def get_missing_scopes(self, required_scopes: list) -> list:
+        """
+        Returns a list of missing scopes.
+        
+        Args:
+            required_scopes: List of required scope strings
+        
+        Returns:
+            list: List of scopes that are missing from the authenticated token.
+        """
+        return [scope for scope in required_scopes if scope not in self.scopes]
 
  
     def get_projects(self):
