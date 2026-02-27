@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
 from auth import HypatosAPI
-from helpers import input_credentials, clear_session_state_generic
+from helpers import input_credentials, clear_session_state_generic, validate_scopes
 from config import BASE_URL_EU, BASE_URL_US
 
 
@@ -30,26 +30,36 @@ def authenticate_credentials():
     target_auth = HypatosAPI(target_user, target_pw, base_url)
     
     if source_auth.authenticate():
-        st.success("Source Authentication succeeded!")
-        st.session_state["source_auth"] = source_auth
         # Fetch and store source company name
         source_company = source_auth.get_company_info()
         if source_company:
             company_name = source_company.get("name", "Unknown")
             st.session_state["source_company_name"] = company_name
             st.info(f"📦 Source Company: **{company_name}**")
+            
+            # Validate scopes
+            if validate_scopes(source_auth, f"Source Company ({company_name})"):
+                st.session_state["source_auth"] = source_auth
+                st.success("Source Authentication succeeded!")
+            else:
+                st.session_state.pop("source_auth", None)
     else:
         st.error("Source Authentication failed.")
     
     if target_auth.authenticate():
-        st.success("Target Authentication succeeded!")
-        st.session_state["target_auth"] = target_auth
         # Fetch and store target company name
         target_company = target_auth.get_company_info()
         if target_company:
             company_name = target_company.get("name", "Unknown")
             st.session_state["target_company_name"] = company_name
             st.info(f"📦 Target Company: **{company_name}**")
+            
+            # Validate scopes
+            if validate_scopes(target_auth, f"Target Company ({company_name})"):
+                st.session_state["target_auth"] = target_auth
+                st.success("Target Authentication succeeded!")
+            else:
+                st.session_state.pop("target_auth", None)
     else:
         st.error("Target Authentication failed.")
 
