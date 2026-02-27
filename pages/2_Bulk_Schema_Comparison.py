@@ -112,9 +112,11 @@ if st.button("🔑 Authenticate Credentials", type="primary"):
                     st.session_state.authenticated = False
             else:
                 if not source_auth_success:
-                    st.error("❌ Source authentication failed")
+                    error_msg = source_api.last_error or "Unknown error occurred"
+                    st.error(f"❌ Source authentication failed\n\n**Error:** {error_msg}")
                 if not target_auth_success:
-                    st.error("❌ Target authentication failed")
+                    error_msg = target_api.last_error or "Unknown error occurred"
+                    st.error(f"❌ Target authentication failed\n\n**Error:** {error_msg}")
                 st.session_state.authenticated = False
     except Exception as e:
         st.error(f"❌ Authentication failed: {str(e)}")

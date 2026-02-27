@@ -43,7 +43,8 @@ def authenticate_credentials():
             else:
                 st.session_state.pop("source_auth", None)
     else:
-        st.error("Source Authentication failed.")
+        error_msg = source_auth.last_error or "Unknown error occurred"
+        st.error(f"❌ Source Authentication failed\n\n**Error:** {error_msg}")
     
     if target_auth.authenticate():
         # Fetch and store target company name
@@ -60,7 +61,8 @@ def authenticate_credentials():
             else:
                 st.session_state.pop("target_auth", None)
     else:
-        st.error("Target Authentication failed.")
+        error_msg = target_auth.last_error or "Unknown error occurred"
+        st.error(f"❌ Target Authentication failed\n\n**Error:** {error_msg}")
 
 
 # --- Flatten Schema Function ---
