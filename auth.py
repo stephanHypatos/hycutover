@@ -14,6 +14,7 @@ class HypatosAPI:
         self.token_type = None
         self.expires_in = None
         self.scopes = []
+        self.last_error = None
 
     def authenticate(self) -> bool:
         """
@@ -40,11 +41,20 @@ class HypatosAPI:
             scopes_str = token_data.get("scope", "")
             self.scopes = scopes_str.split() if scopes_str else []
             
+            self.last_error = None
             return True
         except requests.HTTPError as http_err:
-            print(f"HTTP error during authentication: {http_err}")
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text if http_err.response.text else str(http_err)}"
+            print(f"HTTP error during authentication: {self.last_error}")
+        except requests.ConnectionError as conn_err:
+            self.last_error = f"Connection error: Unable to reach the API server. Please check the API URL."
+            print(f"Connection error during authentication: {self.last_error}")
+        except requests.Timeout as timeout_err:
+            self.last_error = f"Timeout error: The API server took too long to respond."
+            print(f"Timeout error during authentication: {self.last_error}")
         except Exception as err:
-            print(f"Unexpected error during authentication: {err}")
+            self.last_error = str(err)
+            print(f"Unexpected error during authentication: {self.last_error}")
         return False
 
     def get_headers(self) -> dict:
