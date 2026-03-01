@@ -216,7 +216,7 @@ if "caw_agents_done" not in st.session_state:
     st.write(
         f"Fetches all agents for target company `{target_company_id}`, replaces "
         f"any occurrence of source company ID `{source_company_id}` in prompts "
-        "(matched via `(?<=_)[a-fA-F0-9]{24}(?=(_|$))`), "
+        "(matched via `(_)[a-fA-F0-9]{24}`), "
         "increments the agent version, then PUTs each agent back."
     )
     if st.button("Fetch Agents & Update Prompts", key="caw_update_agents"):
@@ -226,7 +226,8 @@ if "caw_agents_done" not in st.session_state:
             st.error(f"No agents found or fetch failed. {setup_api.last_error or ''}")
         else:
             agent_ids = [a.get("id") for a in agents_list if a.get("id")]
-            pattern = re.compile(r'(?<=_)[a-fA-F0-9]{24}(?=(_|$))', re.MULTILINE)
+            # Group 1 captures the leading "_" so we can preserve it in the replacement
+            pattern = re.compile(r'(_)[a-fA-F0-9]{24}', re.MULTILINE)
             results = []
             progress_bar = st.progress(0)
             total = len(agent_ids)
@@ -239,6 +240,7 @@ if "caw_agents_done" not in st.session_state:
                         "agent": agent_id,
                         "id": agent_id,
                         "version": "-",
+                        "replacements": "",
                         "status": f"FAILED: could not fetch versions. {setup_api.last_error or ''}",
                     })
                     progress_bar.progress((i + 1) / total)
@@ -247,33 +249,51 @@ if "caw_agents_done" not in st.session_state:
                 agent = versions[0]
                 prompt = agent.get("prompt") or ""
 
+                # Collect which IDs will be replaced before doing the substitution
+                found_ids = {m.group(0)[1:] for m in pattern.finditer(prompt)}
+                replaced_ids = [fid for fid in found_ids if fid == source_company_id]
+                replacements_label = (
+                    ", ".join(f"_{fid} → _{target_company_id}" for fid in replaced_ids)
+                    if replaced_ids else "none"
+                )
+
                 new_prompt = pattern.sub(
-                    lambda m: target_company_id if m.group(0) == source_company_id else m.group(0),
+                    lambda m: m.group(1) + target_company_id if m.group(0)[1:] == source_company_id else m.group(0),
                     prompt,
                 )
 
                 version_str = str(agent.get("version", "1.0"))
                 try:
-                    new_version = f"{int(float(version_str)) + 1}.0"
+                    new_version = str(int(float(version_str)) + 1)
                 except (ValueError, TypeError):
-                    new_version = "2.0"
+                    new_version = "2"
 
-                payload = {**agent, "prompt": new_prompt, "version": new_version}
+                # Only send fields the API accepts on PUT (exclude read-only fields)
+                read_only_fields = {"id", "createdAt", "updatedAt", "companyId", "agentId"}
+                payload = {
+                    k: v for k, v in agent.items() if k not in read_only_fields
+                }
+                payload["prompt"] = new_prompt
+                payload["version"] = new_version
 
                 update_result = setup_api.update_agent(agent_id, payload)
                 if update_result is not None:
                     results.append({
                         "agent": agent.get("name", agent_id),
                         "id": agent_id,
-                        "version": new_version,
+                        "sent_version": new_version,
+                        "replacements": replacements_label,
                         "status": "OK",
+                        "api_response": update_result,
                     })
                 else:
                     results.append({
                         "agent": agent.get("name", agent_id),
                         "id": agent_id,
-                        "version": new_version,
+                        "sent_version": new_version,
+                        "replacements": replacements_label,
                         "status": f"FAILED: {setup_api.last_error or 'unknown error'}",
+                        "api_response": None,
                     })
 
                 progress_bar.progress((i + 1) / total)
@@ -284,14 +304,21 @@ if "caw_agents_done" not in st.session_state:
     st.stop()
 
 update_results = st.session_state.get("caw_update_results", [])
-failed = [r for r in update_results if r["status"] != "OK"]
+failed = [r for r in update_results if not r["status"].startswith("OK")]
 if failed:
     st.warning(f"Completed with {len(failed)} failure(s).")
 else:
     st.success(f"All {len(update_results)} agent(s) updated successfully.")
 
-if update_results:
-    st.dataframe(pd.DataFrame(update_results), use_container_width=True)
+for r in update_results:
+    icon = "✅" if r["status"] == "OK" else "❌"
+    label = f"{icon} **{r['agent']}** — version sent: `{r['sent_version']}` — replacements: {r['replacements']} — {r['status']}"
+    with st.expander(label, expanded=r["status"] != "OK"):
+        st.write("**API response:**")
+        if r["api_response"] is not None:
+            st.json(r["api_response"])
+        else:
+            st.write("_(no response body)_")
 
 if st.button("Reset Step 4", key="caw_reset_step4"):
     for key in ["caw_workflows", "caw_wf_detail", "caw_copy_done",
