@@ -65,6 +65,39 @@ def validate_scopes(auth, company_name: str):
         return False
     return True
 
+def check_admin_access() -> bool:
+    """
+    Checks if the current user has admin access.
+    If not authenticated, displays a login form and validates credentials
+    against the [admin_users] section in secrets.toml.
+
+    Returns:
+        bool: True if admin is authenticated, False otherwise.
+    """
+    if st.session_state.get("admin_authenticated"):
+        col1, col2 = st.columns([5, 1])
+        with col2:
+            if st.button("Logout", key="admin_logout"):
+                st.session_state["admin_authenticated"] = False
+                st.rerun()
+        return True
+
+    st.subheader("Admin Login Required")
+    st.info("This page requires admin access. Please log in with your admin credentials.")
+    email = st.text_input("Email", key="admin_email")
+    password = st.text_input("Password", type="password", key="admin_password")
+
+    if st.button("Login", key="admin_login"):
+        admin_users = st.secrets.get("admin_users", {})
+        if email in admin_users and admin_users[email] == password:
+            st.session_state["admin_authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Invalid credentials. Please try again.")
+
+    return False
+
+
 def select_project_and_get_schema(auth):
     """
     Displays a selectbox listing all projects retrieved via the provided auth instance.
