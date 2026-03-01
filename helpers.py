@@ -89,8 +89,7 @@ def check_admin_access() -> bool:
 
     if st.button("Login", key="admin_login"):
         admin_users = st.secrets.get("admin_users", {})
-        valid = bool(email) and admin_users.get(email) == password
-        if valid:
+        if email in admin_users and admin_users[email] == password:
             st.session_state["admin_authenticated"] = True
             st.rerun()
         else:
