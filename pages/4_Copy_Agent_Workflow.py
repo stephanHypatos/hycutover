@@ -1,5 +1,6 @@
 import streamlit as st
 from helpers import check_admin_access
+from setup_api import SetupAPI
 
 st.set_page_config(page_title="Copy Agent Workflow", layout="wide")
 st.title("Copy Agent Workflow")
@@ -51,11 +52,35 @@ with col1:
     st.success("Access token loaded.")
 with col2:
     if st.button("Clear token", key="clear_token"):
-        del st.session_state["setup_access_token"]
+        for key in ["setup_access_token", "setup_source_company", "setup_target_company"]:
+            st.session_state.pop(key, None)
         st.rerun()
 
+api = SetupAPI(st.session_state["setup_access_token"])
+
 # ---------------------------------------------------------------------------
-# Step 2 – (coming next)
+# Step 2 – Select source and target companies
 # ---------------------------------------------------------------------------
-st.header("Step 2: Copy Agent Workflow")
+st.header("Step 2: Select Companies")
+
+if st.button("Load companies", key="load_companies"):
+    with st.spinner("Fetching company…"):
+        company = api.get_company()
+    if company:
+        st.session_state["setup_source_company"] = company
+        st.session_state["setup_target_company"] = company
+    else:
+        st.error(f"Could not fetch company. {api.last_error or ''}")
+
+if "setup_source_company" not in st.session_state:
+    st.info("Click **Load companies** to verify your token and retrieve your company.")
+    st.stop()
+
+company = st.session_state["setup_source_company"]
+st.success(f"Company: **{company.get('name', company.get('id', 'Unknown'))}** (ID: `{company.get('id', '?')}`)")
+
+# ---------------------------------------------------------------------------
+# Step 3 – Copy agent workflow (coming next)
+# ---------------------------------------------------------------------------
+st.header("Step 3: Copy Agent Workflow")
 st.info("Implementation coming soon.")
