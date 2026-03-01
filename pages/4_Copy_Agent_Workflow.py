@@ -215,9 +215,8 @@ st.subheader("4c. Update Agent Prompts in Target Company")
 if "caw_agents_done" not in st.session_state:
     st.write(
         f"Fetches all agents for target company `{target_company_id}`, replaces "
-        f"any occurrence of source company ID `{source_company_id}` in prompts "
-        "(matched via `(_)[a-fA-F0-9]{24}`), "
-        "increments the agent version, then PUTs each agent back."
+        "every `_` followed by 24 hex chars in prompts with "
+        f"`_{target_company_id}`, increments the agent version, then PUTs each agent back."
     )
     if st.button("Fetch Agents & Update Prompts", key="caw_update_agents"):
         with st.spinner("Fetching target company agents…"):
@@ -226,8 +225,7 @@ if "caw_agents_done" not in st.session_state:
             st.error(f"No agents found or fetch failed. {setup_api.last_error or ''}")
         else:
             agent_ids = [a.get("id") for a in agents_list if a.get("id")]
-            # Group 1 captures the leading "_" so we can preserve it in the replacement
-            pattern = re.compile(r'(_)[a-fA-F0-9]{24}', re.MULTILINE)
+            pattern = re.compile(r'_[a-fA-F0-9]{24}')
             results = []
             progress_bar = st.progress(0)
             total = len(agent_ids)
@@ -249,18 +247,14 @@ if "caw_agents_done" not in st.session_state:
                 agent = versions[0]
                 prompt = agent.get("prompt") or ""
 
-                # Collect which IDs will be replaced before doing the substitution
-                found_ids = {m.group(0)[1:] for m in pattern.finditer(prompt)}
-                replaced_ids = [fid for fid in found_ids if fid == source_company_id]
+                matches = pattern.findall(prompt)
+                unique = set(matches)
                 replacements_label = (
-                    ", ".join(f"_{fid} → _{target_company_id}" for fid in replaced_ids)
-                    if replaced_ids else "none"
+                    ", ".join(f"{m} → _{target_company_id}" for m in sorted(unique))
+                    if matches else "none"
                 )
 
-                new_prompt = pattern.sub(
-                    lambda m: m.group(1) + target_company_id if m.group(0)[1:] == source_company_id else m.group(0),
-                    prompt,
-                )
+                new_prompt = pattern.sub(f"_{target_company_id}", prompt)
 
                 version_str = str(agent.get("version", "1.0"))
                 try:
