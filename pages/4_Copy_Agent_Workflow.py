@@ -7,8 +7,8 @@ from config import BASE_URL_EU, BASE_URL_US
 st.set_page_config(page_title="Copy Agent Workflow", layout="wide")
 st.title("Copy Agent Workflow")
 
-if not check_admin_access():
-    st.stop()
+#if not check_admin_access():
+#    st.stop()
 
 SETUP_URL = "https://setup.cloud.hypatos.ai"
 
