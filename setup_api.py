@@ -32,7 +32,7 @@ class SetupAPI:
 
     def _headers(self) -> dict:
         return {
-            "Authorization": f"Bearer {self.access_token}",
+            "Cookie": f"access_token={self.access_token}",
             "Content-Type": "application/json",
         }
 
