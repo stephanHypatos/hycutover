@@ -168,6 +168,16 @@ class SetupAPI:
             return []
         return data if isinstance(data, list) else data.get("data", [])
 
+    def get_agent_by_id(self, agent_id: str) -> list:
+        """
+        GET /v1/prompting-settings/agents/{agent_id}
+        Returns all versions of the agent (latest version is the first element).
+        """
+        data = self._get(f"/v1/prompting-settings/agents/{agent_id}")
+        if data is None:
+            return []
+        return data if isinstance(data, list) else [data]
+
     def copy_agent(self, payload: dict) -> dict:
         """
         POST /v1/prompting-settings/agents
