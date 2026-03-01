@@ -75,7 +75,7 @@ class SetupAPI:
         return None
 
     def _put(self, path: str, payload: dict):
-        """Execute a PUT request and return parsed JSON, or None on error."""
+        """Execute a PUT request and return parsed JSON (or {} on 204), or None on error."""
         try:
             response = requests.put(
                 f"{self.base_url}{path}",
@@ -84,6 +84,8 @@ class SetupAPI:
             )
             response.raise_for_status()
             self.last_error = None
+            if response.status_code == 204 or not response.content:
+                return {}
             return response.json()
         except requests.HTTPError as err:
             self.last_error = f"HTTP {err.response.status_code}: {err.response.text}"
