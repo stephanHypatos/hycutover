@@ -216,7 +216,7 @@ if "caw_agents_done" not in st.session_state:
     st.write(
         f"Fetches all agents for target company `{target_company_id}`, replaces "
         f"any occurrence of source company ID `{source_company_id}` in prompts "
-        "(matched via `(?<=_)[a-fA-F0-9]{24}(?=(_|$))`), "
+        "(matched via `(_)[a-fA-F0-9]{24}`), "
         "increments the agent version, then PUTs each agent back."
     )
     if st.button("Fetch Agents & Update Prompts", key="caw_update_agents"):
@@ -226,7 +226,8 @@ if "caw_agents_done" not in st.session_state:
             st.error(f"No agents found or fetch failed. {setup_api.last_error or ''}")
         else:
             agent_ids = [a.get("id") for a in agents_list if a.get("id")]
-            pattern = re.compile(r'(?<=_)[a-fA-F0-9]{24}(?=(_|$))', re.MULTILINE)
+            # Group 1 captures the leading "_" so we can preserve it in the replacement
+            pattern = re.compile(r'(_)[a-fA-F0-9]{24}', re.MULTILINE)
             results = []
             progress_bar = st.progress(0)
             total = len(agent_ids)
@@ -239,6 +240,7 @@ if "caw_agents_done" not in st.session_state:
                         "agent": agent_id,
                         "id": agent_id,
                         "version": "-",
+                        "replacements": "",
                         "status": f"FAILED: could not fetch versions. {setup_api.last_error or ''}",
                     })
                     progress_bar.progress((i + 1) / total)
@@ -247,8 +249,16 @@ if "caw_agents_done" not in st.session_state:
                 agent = versions[0]
                 prompt = agent.get("prompt") or ""
 
+                # Collect which IDs will be replaced before doing the substitution
+                found_ids = {m.group(0)[1:] for m in pattern.finditer(prompt)}
+                replaced_ids = [fid for fid in found_ids if fid == source_company_id]
+                replacements_label = (
+                    ", ".join(f"_{fid} → _{target_company_id}" for fid in replaced_ids)
+                    if replaced_ids else "none"
+                )
+
                 new_prompt = pattern.sub(
-                    lambda m: target_company_id if m.group(0) == source_company_id else m.group(0),
+                    lambda m: m.group(1) + target_company_id if m.group(0)[1:] == source_company_id else m.group(0),
                     prompt,
                 )
 
@@ -266,6 +276,7 @@ if "caw_agents_done" not in st.session_state:
                         "agent": agent.get("name", agent_id),
                         "id": agent_id,
                         "version": new_version,
+                        "replacements": replacements_label,
                         "status": "OK",
                     })
                 else:
@@ -273,6 +284,7 @@ if "caw_agents_done" not in st.session_state:
                         "agent": agent.get("name", agent_id),
                         "id": agent_id,
                         "version": new_version,
+                        "replacements": replacements_label,
                         "status": f"FAILED: {setup_api.last_error or 'unknown error'}",
                     })
 
