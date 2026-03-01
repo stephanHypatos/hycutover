@@ -284,6 +284,7 @@ if "caw_agents_done" not in st.session_state:
                         "sent_version": new_version,
                         "replacements": replacements_label,
                         "status": "OK",
+                        "payload": payload,
                         "api_response": update_result,
                     })
                 else:
@@ -293,6 +294,7 @@ if "caw_agents_done" not in st.session_state:
                         "sent_version": new_version,
                         "replacements": replacements_label,
                         "status": f"FAILED: {setup_api.last_error or 'unknown error'}",
+                        "payload": payload,
                         "api_response": None,
                     })
 
@@ -314,6 +316,8 @@ for r in update_results:
     icon = "✅" if r["status"] == "OK" else "❌"
     label = f"{icon} **{r['agent']}** — version sent: `{r['sent_version']}` — replacements: {r['replacements']} — {r['status']}"
     with st.expander(label, expanded=r["status"] != "OK"):
+        st.write("**Payload sent:**")
+        st.json(r["payload"])
         st.write("**API response:**")
         if r["api_response"] is not None:
             st.json(r["api_response"])
