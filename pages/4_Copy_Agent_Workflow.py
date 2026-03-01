@@ -221,17 +221,30 @@ if "caw_agents_done" not in st.session_state:
     )
     if st.button("Fetch Agents & Update Prompts", key="caw_update_agents"):
         with st.spinner("Fetching target company agents…"):
-            agents = setup_api.get_agents(target_company_id)
-        if not agents:
+            agents_list = setup_api.get_agents(target_company_id)
+        if not agents_list:
             st.error(f"No agents found or fetch failed. {setup_api.last_error or ''}")
         else:
+            agent_ids = [a.get("id") for a in agents_list if a.get("id")]
             pattern = re.compile(r'(?<=_)[a-fA-F0-9]{24}(?=(_|$))', re.MULTILINE)
             results = []
             progress_bar = st.progress(0)
-            total = len(agents)
+            total = len(agent_ids)
 
-            for i, agent in enumerate(agents):
-                agent_id = agent.get("id")
+            for i, agent_id in enumerate(agent_ids):
+                # Fetch all versions; latest is the first element
+                versions = setup_api.get_agent_by_id(agent_id)
+                if not versions:
+                    results.append({
+                        "agent": agent_id,
+                        "id": agent_id,
+                        "version": "-",
+                        "status": f"FAILED: could not fetch versions. {setup_api.last_error or ''}",
+                    })
+                    progress_bar.progress((i + 1) / total)
+                    continue
+
+                agent = versions[0]
                 prompt = agent.get("prompt") or ""
 
                 new_prompt = pattern.sub(
