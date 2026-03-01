@@ -1,4 +1,3 @@
-import re
 import streamlit as st
 import pandas as pd
 from auth import HypatosAPI
@@ -226,8 +225,9 @@ if "caw_agents_done" not in st.session_state:
             st.error(f"No agents found or fetch failed. {setup_api.last_error or ''}")
         else:
             agent_ids = [a.get("id") for a in agents_list if a.get("id")]
-            # Group 1 captures the leading "_" so we can preserve it in the replacement
-            pattern = re.compile(r'(_)[a-fA-F0-9]{24}', re.MULTILINE)
+            # Match the exact source company ID preceded by an underscore
+            src_tag = f"_{source_company_id}"
+            tgt_tag = f"_{target_company_id}"
             results = []
             progress_bar = st.progress(0)
             total = len(agent_ids)
@@ -249,18 +249,12 @@ if "caw_agents_done" not in st.session_state:
                 agent = versions[0]
                 prompt = agent.get("prompt") or ""
 
-                # Collect which IDs will be replaced before doing the substitution
-                found_ids = {m.group(0)[1:] for m in pattern.finditer(prompt)}
-                replaced_ids = [fid for fid in found_ids if fid == source_company_id]
+                count = prompt.count(src_tag)
                 replacements_label = (
-                    ", ".join(f"_{fid} → _{target_company_id}" for fid in replaced_ids)
-                    if replaced_ids else "none"
+                    f"{src_tag} → {tgt_tag} ({count}×)" if count else "none"
                 )
 
-                new_prompt = pattern.sub(
-                    lambda m: m.group(1) + target_company_id if m.group(0)[1:] == source_company_id else m.group(0),
-                    prompt,
-                )
+                new_prompt = prompt.replace(src_tag, tgt_tag)
 
                 version_str = str(agent.get("version", "1.0"))
                 try:
