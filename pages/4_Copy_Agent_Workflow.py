@@ -268,8 +268,8 @@ if "caw_agents_done" not in st.session_state:
                 except (ValueError, TypeError):
                     new_version = "2"
 
-                # Only send fields the API accepts on PUT (exclude read-only fields)
-                read_only_fields = {"id", "createdAt", "updatedAt", "companyId", "agentId"}
+                # Strip only server-managed timestamps; id and companyId must be included
+                read_only_fields = {"createdAt", "updatedAt"}
                 payload = {
                     k: v for k, v in agent.items() if k not in read_only_fields
                 }
