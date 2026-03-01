@@ -126,6 +126,10 @@ class SetupAPI:
             {**payload, "companyId": company_id},
         )
 
+    def get_prompting_setting_by_id(self, workflow_id: str) -> dict:
+        """GET /v1/prompting-settings/{workflow_id}"""
+        return self._get(f"/v1/prompting-settings/{workflow_id}")
+
     def copy_prompting_settings(self, source_company_id: str, target_company_id: str) -> dict:
         """
         POST /v1/prompting-settings/copy
@@ -136,6 +140,20 @@ class SetupAPI:
             {
                 "sourceCompanyId": source_company_id,
                 "targetCompanyId": target_company_id,
+            },
+        )
+
+    def copy_workflow(self, workflow_id: str, target_company_id: str) -> dict:
+        """
+        POST /v1/prompting-settings/copy
+        Copies a specific workflow by ID to the target company.
+        """
+        return self._post(
+            "/v1/prompting-settings/copy",
+            {
+                "workflowId": workflow_id,
+                "targetCompanyId": target_company_id,
+                "duplicateResolution": "create_new_version",
             },
         )
 
@@ -157,6 +175,10 @@ class SetupAPI:
           sourceCompanyId, targetCompanyId, agentId  (or full agent body)
         """
         return self._post("/v1/prompting-settings/agents", payload)
+
+    def update_agent(self, agent_id: str, payload: dict) -> dict:
+        """PUT /v1/prompting-settings/agents/{agent_id}"""
+        return self._put(f"/v1/prompting-settings/agents/{agent_id}", payload)
 
     # ------------------------------------------------------------------
     # Composite enrichment workflows
