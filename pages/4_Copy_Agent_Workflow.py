@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import pandas as pd
 from auth import HypatosAPI
@@ -214,9 +215,8 @@ st.subheader("4c. Update Agent Prompts in Target Company")
 if "caw_agents_done" not in st.session_state:
     st.write(
         f"Fetches all agents for target company `{target_company_id}`, replaces "
-        f"any occurrence of source company ID `{source_company_id}` in prompts "
-        "(matched via `(_)[a-fA-F0-9]{24}`), "
-        "increments the agent version, then PUTs each agent back."
+        "every `_` followed by 24 hex chars in prompts with "
+        f"`_{target_company_id}`, increments the agent version, then PUTs each agent back."
     )
     if st.button("Fetch Agents & Update Prompts", key="caw_update_agents"):
         with st.spinner("Fetching target company agents…"):
@@ -225,9 +225,7 @@ if "caw_agents_done" not in st.session_state:
             st.error(f"No agents found or fetch failed. {setup_api.last_error or ''}")
         else:
             agent_ids = [a.get("id") for a in agents_list if a.get("id")]
-            # Match the exact source company ID preceded by an underscore
-            src_tag = f"_{source_company_id}"
-            tgt_tag = f"_{target_company_id}"
+            pattern = re.compile(r'_[a-fA-F0-9]{24}')
             results = []
             progress_bar = st.progress(0)
             total = len(agent_ids)
@@ -249,12 +247,14 @@ if "caw_agents_done" not in st.session_state:
                 agent = versions[0]
                 prompt = agent.get("prompt") or ""
 
-                count = prompt.count(src_tag)
+                matches = pattern.findall(prompt)
+                unique = set(matches)
                 replacements_label = (
-                    f"{src_tag} → {tgt_tag} ({count}×)" if count else "none"
+                    ", ".join(f"{m} → _{target_company_id}" for m in sorted(unique))
+                    if matches else "none"
                 )
 
-                new_prompt = prompt.replace(src_tag, tgt_tag)
+                new_prompt = pattern.sub(f"_{target_company_id}", prompt)
 
                 version_str = str(agent.get("version", "1.0"))
                 try:
