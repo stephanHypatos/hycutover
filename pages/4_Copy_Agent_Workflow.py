@@ -1,4 +1,6 @@
+import re
 import streamlit as st
+import pandas as pd
 from auth import HypatosAPI
 from setup_api import SetupAPI
 from helpers import check_admin_access
@@ -124,12 +126,162 @@ with col2:
             "caw_source_auth", "caw_source_company",
             "caw_target_auth", "caw_target_company",
             "caw_setup_token",
+            "caw_workflows", "caw_wf_detail",
+            "caw_copy_done", "caw_agents_done", "caw_update_results",
         ]:
             st.session_state.pop(key, None)
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# Step 4 – Copy agent workflow (coming next)
+# Step 4 – Copy agent workflow
 # ---------------------------------------------------------------------------
 st.header("Step 4: Copy Agent Workflow")
-st.info("Implementation coming soon.")
+
+setup_api = SetupAPI(st.session_state["caw_setup_token"])
+source_company_id = st.session_state["caw_source_company"].get("id")
+target_company_id = st.session_state["caw_target_company"].get("id")
+
+# ── 4a: Load & select workflow ──────────────────────────────────────────────
+st.subheader("4a. Select Prompting-Settings Workflow")
+
+if "caw_workflows" not in st.session_state:
+    if st.button("Load Source Workflows", key="caw_load_wf"):
+        with st.spinner("Fetching agentic workflows…"):
+            data = setup_api.get_prompting_settings(source_company_id)
+        if data is None:
+            st.error(f"Failed to load workflows. {setup_api.last_error or ''}")
+        else:
+            wfs = data if isinstance(data, list) else data.get("data", [])
+            st.session_state["caw_workflows"] = [w for w in wfs if w.get("id")]
+            st.rerun()
+    st.stop()
+
+workflows = st.session_state["caw_workflows"]
+if not workflows:
+    st.warning("No workflows found for the source company.")
+    if st.button("Reload Workflows", key="caw_reload_wf"):
+        st.session_state.pop("caw_workflows", None)
+        st.rerun()
+    st.stop()
+
+wf_map = {f"{w.get('name', 'Unnamed')} ({w['id']})": w for w in workflows}
+selected_label = st.selectbox("Workflow", list(wf_map.keys()), key="caw_wf_sel")
+selected_wf = wf_map[selected_label]
+
+if "caw_wf_detail" not in st.session_state:
+    if st.button("Confirm & Load Details", key="caw_confirm_wf"):
+        with st.spinner("Loading workflow detail…"):
+            detail = setup_api.get_prompting_setting_by_id(selected_wf["id"])
+        if detail is None:
+            st.error(f"Failed to load workflow detail. {setup_api.last_error or ''}")
+        else:
+            st.session_state["caw_wf_detail"] = detail
+            st.rerun()
+    st.stop()
+
+wf_detail = st.session_state["caw_wf_detail"]
+st.success(
+    f"Workflow: **{wf_detail.get('name', selected_wf.get('name', 'Unknown'))}** "
+    f"(`{wf_detail.get('id', selected_wf['id'])}`)"
+)
+with st.expander("Workflow details"):
+    st.json(wf_detail)
+
+# ── 4b: Copy workflow to target ─────────────────────────────────────────────
+st.subheader("4b. Copy Workflow to Target Company")
+
+if "caw_copy_done" not in st.session_state:
+    wf_id = wf_detail.get("id") or selected_wf["id"]
+    st.write(
+        f"Copy workflow `{wf_id}` → target company `{target_company_id}`"
+    )
+    if st.button("Copy Workflow", key="caw_do_copy"):
+        with st.spinner("Copying workflow…"):
+            result = setup_api.copy_workflow(wf_id, target_company_id)
+        if result is None:
+            st.error(f"Copy failed. {setup_api.last_error or ''}")
+        else:
+            st.session_state["caw_copy_done"] = result
+            st.rerun()
+    st.stop()
+
+st.success("Workflow copied to target company.")
+with st.expander("Copy response"):
+    st.json(st.session_state["caw_copy_done"])
+
+# ── 4c: Update agent prompts in target company ──────────────────────────────
+st.subheader("4c. Update Agent Prompts in Target Company")
+
+if "caw_agents_done" not in st.session_state:
+    st.write(
+        f"Fetches all agents for target company `{target_company_id}`, replaces "
+        f"any occurrence of source company ID `{source_company_id}` in prompts "
+        "(matched via `(?<=_)[a-fA-F0-9]{24}(?=(_|$))`), "
+        "increments the agent version, then PUTs each agent back."
+    )
+    if st.button("Fetch Agents & Update Prompts", key="caw_update_agents"):
+        with st.spinner("Fetching target company agents…"):
+            agents = setup_api.get_agents(target_company_id)
+        if not agents:
+            st.error(f"No agents found or fetch failed. {setup_api.last_error or ''}")
+        else:
+            pattern = re.compile(r'(?<=_)[a-fA-F0-9]{24}(?=(_|$))', re.MULTILINE)
+            results = []
+            progress_bar = st.progress(0)
+            total = len(agents)
+
+            for i, agent in enumerate(agents):
+                agent_id = agent.get("id")
+                prompt = agent.get("prompt") or ""
+
+                new_prompt = pattern.sub(
+                    lambda m: target_company_id if m.group(0) == source_company_id else m.group(0),
+                    prompt,
+                )
+
+                version_str = str(agent.get("version", "1.0"))
+                try:
+                    new_version = f"{int(float(version_str)) + 1}.0"
+                except (ValueError, TypeError):
+                    new_version = "2.0"
+
+                payload = {**agent, "prompt": new_prompt, "version": new_version}
+
+                update_result = setup_api.update_agent(agent_id, payload)
+                if update_result is not None:
+                    results.append({
+                        "agent": agent.get("name", agent_id),
+                        "id": agent_id,
+                        "version": new_version,
+                        "status": "OK",
+                    })
+                else:
+                    results.append({
+                        "agent": agent.get("name", agent_id),
+                        "id": agent_id,
+                        "version": new_version,
+                        "status": f"FAILED: {setup_api.last_error or 'unknown error'}",
+                    })
+
+                progress_bar.progress((i + 1) / total)
+
+            st.session_state["caw_agents_done"] = True
+            st.session_state["caw_update_results"] = results
+            st.rerun()
+    st.stop()
+
+update_results = st.session_state.get("caw_update_results", [])
+failed = [r for r in update_results if r["status"] != "OK"]
+if failed:
+    st.warning(f"Completed with {len(failed)} failure(s).")
+else:
+    st.success(f"All {len(update_results)} agent(s) updated successfully.")
+
+if update_results:
+    st.dataframe(pd.DataFrame(update_results), use_container_width=True)
+
+if st.button("Reset Step 4", key="caw_reset_step4"):
+    for key in ["caw_workflows", "caw_wf_detail", "caw_copy_done",
+                "caw_agents_done", "caw_update_results"]:
+        st.session_state.pop(key, None)
+    st.rerun()
