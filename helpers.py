@@ -2,7 +2,7 @@ import streamlit as st
 from config import BASE_URL_EU, BASE_URL_US
 
 # Required scopes for API operations
-REQUIRED_SCOPES = ["projects.read", "projects.write", "routings.read", "routings.write"]
+REQUIRED_SCOPES = ["projects.read", "projects.write", "routings.read", "routings.write", "companies.read"]
 
 # --- Helper Functions ---
 def input_credentials():
