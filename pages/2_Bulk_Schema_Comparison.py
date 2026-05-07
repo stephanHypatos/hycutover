@@ -93,17 +93,22 @@ if st.button("🔑 Authenticate Credentials", type="primary"):
             target_auth_success = target_api.authenticate()
             
             if source_auth_success and target_auth_success:
-                # Validate scopes for both
-                source_company = source_api.get_company_info()
-                target_company = target_api.get_company_info()
-                
-                source_company_name = source_company.get("name", "Unknown") if source_company else "Unknown"
-                target_company_name = target_company.get("name", "Unknown") if target_company else "Unknown"
-                
-                source_scopes_valid = validate_scopes(source_api, f"Source Company ({source_company_name})")
-                target_scopes_valid = validate_scopes(target_api, f"Target Company ({target_company_name})")
+                source_scopes_valid = validate_scopes(source_api, "Source Company")
+                target_scopes_valid = validate_scopes(target_api, "Target Company")
                 
                 if source_scopes_valid and target_scopes_valid:
+                    source_company = source_api.get_company_info()
+                    target_company = target_api.get_company_info()
+
+                    if not source_company:
+                        st.error("❌ Source credentials authenticated, but company details could not be fetched. Please verify the credentials have `companies.read` for the selected API region.")
+                        st.session_state.authenticated = False
+                        st.stop()
+                    if not target_company:
+                        st.error("❌ Target credentials authenticated, but company details could not be fetched. Please verify the credentials have `companies.read` for the selected API region.")
+                        st.session_state.authenticated = False
+                        st.stop()
+
                     st.session_state.source_api = source_api
                     st.session_state.target_api = target_api
                     st.session_state.authenticated = True

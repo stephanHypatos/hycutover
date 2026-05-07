@@ -1,7 +1,13 @@
 import streamlit as st
 import requests
 from auth import HypatosAPI
-from helpers import input_credentials, clear_session_state_generic, validate_scopes
+from helpers import (
+    clear_session_state_generic,
+    get_source_base_url,
+    get_target_base_url,
+    input_credentials,
+    validate_scopes,
+)
 from config import BASE_URL_EU, BASE_URL_US
 
 
@@ -14,7 +20,8 @@ def authenticate_credentials():
     source_pw = st.session_state.get("sourcecompany_apipw", "")
     target_user = st.session_state.get("targetcompany_user", "")
     target_pw = st.session_state.get("targetcompany_apipw", "")
-    base_url = st.session_state.get("base_url", "")
+    source_base_url = get_source_base_url()
+    target_base_url = get_target_base_url()
 
     errors = False
     if not source_user or not source_pw:
@@ -26,41 +33,43 @@ def authenticate_credentials():
     if errors:
         return
 
-    source_auth = HypatosAPI(source_user, source_pw, base_url)
-    target_auth = HypatosAPI(target_user, target_pw, base_url)
+    source_auth = HypatosAPI(source_user, source_pw, source_base_url)
+    target_auth = HypatosAPI(target_user, target_pw, target_base_url)
     
     if source_auth.authenticate():
-        # Fetch and store source company name
-        source_company = source_auth.get_company_info()
-        if source_company:
-            company_name = source_company.get("name", "Unknown")
-            st.session_state["source_company_name"] = company_name
-            st.info(f"📦 Source Company: **{company_name}**")
-            
-            # Validate scopes
-            if validate_scopes(source_auth, f"Source Company ({company_name})"):
-                st.session_state["source_auth"] = source_auth
-                st.success("Source Authentication succeeded!")
+        if validate_scopes(source_auth, "Source Company"):
+            source_company = source_auth.get_company_info()
+            company_name = source_company.get("name", "Unknown") if source_company else "Unknown"
+            if source_company:
+                st.session_state["source_company_name"] = company_name
+                st.info(f"📦 Source Company: **{company_name}**")
             else:
+                st.error("Source credentials authenticated, but company details could not be fetched. Please verify the credentials have `companies.read` for the selected API region.")
                 st.session_state.pop("source_auth", None)
+                return
+            st.session_state["source_auth"] = source_auth
+            st.success("Source Authentication succeeded!")
+        else:
+            st.session_state.pop("source_auth", None)
     else:
         error_msg = source_auth.last_error or "Unknown error occurred"
         st.error(f"❌ Source Authentication failed\n\n**Error:** {error_msg}")
     
     if target_auth.authenticate():
-        # Fetch and store target company name
-        target_company = target_auth.get_company_info()
-        if target_company:
-            company_name = target_company.get("name", "Unknown")
-            st.session_state["target_company_name"] = company_name
-            st.info(f"📦 Target Company: **{company_name}**")
-            
-            # Validate scopes
-            if validate_scopes(target_auth, f"Target Company ({company_name})"):
-                st.session_state["target_auth"] = target_auth
-                st.success("Target Authentication succeeded!")
+        if validate_scopes(target_auth, "Target Company"):
+            target_company = target_auth.get_company_info()
+            company_name = target_company.get("name", "Unknown") if target_company else "Unknown"
+            if target_company:
+                st.session_state["target_company_name"] = company_name
+                st.info(f"📦 Target Company: **{company_name}**")
             else:
+                st.error("Target credentials authenticated, but company details could not be fetched. Please verify the credentials have `companies.read` for the selected API region.")
                 st.session_state.pop("target_auth", None)
+                return
+            st.session_state["target_auth"] = target_auth
+            st.success("Target Authentication succeeded!")
+        else:
+            st.session_state.pop("target_auth", None)
     else:
         error_msg = target_auth.last_error or "Unknown error occurred"
         st.error(f"❌ Target Authentication failed\n\n**Error:** {error_msg}")
@@ -131,6 +140,7 @@ def copy_projects_section():
 
         # Mapping: original project ID -> new project ID
         project_id_map = {}
+        project_name_map = {}
         for project_id, project_name in selected_projects:
             project_details = source_auth.get_project_by_id(project_id)
             project_schema = source_auth.get_project_schema(project_id)
@@ -153,71 +163,308 @@ def copy_projects_section():
                     new_project = response.json()
                     new_project_id = new_project.get("id")
                     project_id_map[project_id] = new_project_id
+                    project_name_map[project_id] = final_project_name
+                    project_name_map[new_project_id] = final_project_name
                     st.success(f"Project '{final_project_name}' created successfully!")
                 else:
                     st.error(f"Failed to create project '{final_project_name}'. Status code: {response.status_code}")
             else:
                 st.error(f"Failed to retrieve details for project '{project_name}'.")
         st.session_state["project_map"] = project_id_map
+        st.session_state["project_name_map"] = project_name_map
+
+    saved_project_map = st.session_state.get("project_map", {})
+    saved_project_names = st.session_state.get("project_name_map", {})
+    if saved_project_map:
         st.subheader("Project ID Mapping")
-        st.write(project_id_map)
-        st.write('You can now copy the routing rules: Click Copy Routing Rules on the left')
+        _display_project_mapping(saved_project_map, saved_project_names)
+        st.info("Project copies are ready. You can now copy the routing rules using this mapping.")
+        if st.button("Copy Routing Rules", key="copy_routing_rules_from_copy_projects_page"):
+            copy_routing_rules_with_map(
+                source_auth,
+                target_auth,
+                saved_project_map,
+                saved_project_names,
+            )
 
 # --- Copy Routing Rules Section ---
-def copy_routing_rules_section():
-    st.title("Copy Routing Rules")
-    if "project_map" not in st.session_state or not st.session_state["project_map"]:
-        st.error("No project mapping found. Please complete the project copy phase first.")
+def _format_project_label(project_id, project_names):
+    project_name = project_names.get(project_id)
+    if project_name:
+        return f"{project_name} ({project_id})"
+    return project_id or "Unknown project"
+
+
+def _display_routing_copy_results(copied, skipped, failed, results):
+    st.subheader("Summary")
+    st.write(f"**Copied:** {len(copied)} | **Skipped:** {skipped} | **Failed:** {failed}")
+
+    if copied:
+        st.subheader("Routing Rule Mapping (Original ID -> New ID)")
+        st.write(copied)
+
+    if results:
+        st.subheader("Routing Rule Copy Details")
+        st.dataframe(
+            results,
+            use_container_width=True,
+            hide_index=True,
+            column_order=[
+                "status",
+                "rule_id",
+                "new_rule_id",
+                "source_route",
+                "target_route",
+                "reason",
+            ],
+        )
+
+
+def _display_project_mapping(project_id_map, project_names=None):
+    project_names = project_names or {}
+    mapping_rows = []
+    for source_id, target_id in project_id_map.items():
+        mapping_rows.append({
+            "source_project": _format_project_label(source_id, project_names),
+            "target_project": _format_project_label(target_id, project_names),
+        })
+
+    if mapping_rows:
+        st.dataframe(mapping_rows, use_container_width=True, hide_index=True)
+    else:
+        st.write(project_id_map)
+
+
+def copy_routing_rules_with_map(source_auth, target_auth, project_id_map, project_names=None):
+    """
+    Copy routing rules whose source from/to project IDs are both present in project_id_map.
+    project_id_map maps source project IDs to target project IDs.
+    """
+    st.subheader("Copying Routing Rules")
+    st.info(
+        "Scanning source routing rules, copying only the rules where both the source "
+        "and destination projects are included in the project mapping below."
+    )
+
+    rule_ids = source_auth.get_all_routing_rule_ids(limit=50)
+    if rule_ids is None:
+        st.error("Failed to retrieve routing rule IDs.")
         return
 
-    st.subheader("Project Mapping")
-    st.write("Mapping:", st.session_state["project_map"])
-    
-    # Use source_auth for reading routing rules and target_auth for posting.
+    st.write(f"Found **{len(rule_ids)}** routing rules in the source company.")
+    if not rule_ids:
+        st.info("No routing rules were found in the source company.")
+        _display_routing_copy_results({}, 0, 0, [])
+        return
+
+    copied = {}
+    skipped = 0
+    failed = 0
+    project_names = project_names or {}
+    results = []
+
+    progress_bar = st.progress(0)
+    progress_text = st.empty()
+
+    for index, rid in enumerate(rule_ids, start=1):
+        progress_text.write(f"Checking routing rule {index} of {len(rule_ids)}: `{rid}`")
+        rule_details = source_auth.get_routing_by_id(rid)
+        if rule_details is None:
+            failed += 1
+            results.append({
+                "status": "Failed",
+                "rule_id": rid,
+                "new_rule_id": "",
+                "source_route": "Unknown",
+                "target_route": "",
+                "reason": "Could not retrieve routing rule details from the source company.",
+            })
+            progress_bar.progress(index / len(rule_ids))
+            continue
+
+        original_from = rule_details.get("fromProjectId")
+        original_to = rule_details.get("toProjectId")
+        source_route = (
+            f"{_format_project_label(original_from, project_names)} -> "
+            f"{_format_project_label(original_to, project_names)}"
+        )
+
+        if original_from not in project_id_map or original_to not in project_id_map:
+            skipped += 1
+            missing_projects = []
+            if original_from not in project_id_map:
+                missing_projects.append("from project")
+            if original_to not in project_id_map:
+                missing_projects.append("to project")
+            results.append({
+                "status": "Skipped",
+                "rule_id": rid,
+                "new_rule_id": "",
+                "source_route": source_route,
+                "target_route": "",
+                "reason": f"Skipped because the mapped selection does not include the {' and '.join(missing_projects)}.",
+            })
+            progress_bar.progress(index / len(rule_ids))
+            continue
+
+        new_from = project_id_map[original_from]
+        new_to = project_id_map[original_to]
+        target_route = (
+            f"{_format_project_label(new_from, project_names)} -> "
+            f"{_format_project_label(new_to, project_names)}"
+        )
+        new_rule_payload = dict(rule_details)
+        new_rule_payload["fromProjectId"] = new_from
+        new_rule_payload["toProjectId"] = new_to
+
+        for field in ["id", "createdAt", "updatedAt"]:
+            new_rule_payload.pop(field, None)
+
+        new_rule = target_auth.create_routing_rule(new_rule_payload)
+        if new_rule:
+            new_rule_id = new_rule.get("id")
+            copied[rid] = new_rule_id
+            results.append({
+                "status": "Copied",
+                "rule_id": rid,
+                "new_rule_id": new_rule_id,
+                "source_route": source_route,
+                "target_route": target_route,
+                "reason": "Created in the target company.",
+            })
+        else:
+            failed += 1
+            results.append({
+                "status": "Failed",
+                "rule_id": rid,
+                "new_rule_id": "",
+                "source_route": source_route,
+                "target_route": target_route,
+                "reason": "Target API did not create the routing rule.",
+            })
+
+        progress_bar.progress(index / len(rule_ids))
+
+    progress_text.write("Finished copying routing rules.")
+
+    if copied:
+        st.success(f"Copied {len(copied)} routing rules.")
+    if skipped:
+        st.warning(f"Skipped {skipped} routing rules because their projects were not fully mapped.")
+    if failed:
+        st.error(f"Failed to copy {failed} routing rules.")
+
+    _display_routing_copy_results(copied, skipped, failed, results)
+
+
+def copy_routing_rules_section():
+    st.title("Copy Routing Rules")
+    st.write("Copy routing rules using the project mapping from the project copy step, or map existing projects manually.")
+
     if "source_auth" not in st.session_state or "target_auth" not in st.session_state:
         st.error("Both source and target authentication are required.")
         return
 
     source_auth = st.session_state["source_auth"]
     target_auth = st.session_state["target_auth"]
-    
-    if st.button("Copy Routing Rules"):
-        # Retrieve all routing rule IDs using source_auth.
-        rule_ids = source_auth.get_all_routing_rule_ids(limit=100)
-        
-        if rule_ids is None:
-            st.error("Failed to retrieve routing rule IDs.")
+
+    saved_project_map = st.session_state.get("project_map", {})
+    saved_project_names = st.session_state.get("project_name_map", {})
+    if saved_project_map:
+        st.subheader("Saved Project Mapping")
+        st.info("This mapping was created by the last Copy Projects run and can be reused directly.")
+        _display_project_mapping(saved_project_map, saved_project_names)
+
+        col_copy, col_clear = st.columns([1, 3])
+        with col_copy:
+            if st.button("Copy Routing Rules", key="copy_routing_rules_from_saved_map"):
+                copy_routing_rules_with_map(
+                    source_auth,
+                    target_auth,
+                    saved_project_map,
+                    saved_project_names,
+                )
+                return
+        with col_clear:
+            if st.button("Clear Saved Mapping", key="clear_saved_project_map"):
+                st.session_state.pop("project_map", None)
+                st.session_state.pop("project_name_map", None)
+                st.rerun()
+
+        with st.expander("Map existing projects manually instead"):
+            _manual_copy_routing_rules_section(source_auth, target_auth)
+        return
+
+    _manual_copy_routing_rules_section(source_auth, target_auth)
+
+
+def _manual_copy_routing_rules_section(source_auth, target_auth):
+    st.subheader("Manual Project Mapping")
+
+    source_data = source_auth.get_projects()
+    target_data = target_auth.get_projects()
+    if not source_data:
+        st.error("Failed to retrieve source projects.")
+        return
+    if not target_data:
+        st.error("Failed to retrieve target projects.")
+        return
+
+    source_projects = source_data.get("data", [])
+    target_projects = target_data.get("data", [])
+    if not source_projects:
+        st.info("No source projects found.")
+        return
+    if not target_projects:
+        st.info("No target projects found.")
+        return
+
+    source_project_list = [(proj["id"], proj["name"]) for proj in source_projects]
+    target_project_list = [(proj["id"], proj["name"]) for proj in target_projects]
+    target_options = [None] + target_project_list
+    target_by_name = {proj["name"]: (proj["id"], proj["name"]) for proj in target_projects}
+
+    selected_sources = st.multiselect(
+        "Source Projects",
+        source_project_list,
+        format_func=lambda x: x[1],
+        key="routing_source_projects",
+    )
+
+    if not selected_sources:
+        st.info("Select the source projects that participate in the routing rules you want to copy.")
+        return
+
+    st.subheader("Target Project Mapping")
+    project_id_map = {}
+    project_names = {}
+    mapping_complete = True
+
+    for source_id, source_name in selected_sources:
+        default_target = target_by_name.get(source_name)
+        default_index = target_options.index(default_target) if default_target in target_options else 0
+        selected_target = st.selectbox(
+            f"Target project for '{source_name}'",
+            target_options,
+            index=default_index,
+            format_func=lambda x: "Select a target project" if x is None else x[1],
+            key=f"routing_target_for_{source_id}",
+        )
+        if selected_target:
+            project_id_map[source_id] = selected_target[0]
+            project_names[source_id] = source_name
+            project_names[selected_target[0]] = selected_target[1]
+        else:
+            mapping_complete = False
+
+    st.subheader("Project ID Mapping")
+    st.write(project_id_map)
+
+    if st.button("Copy Routing Rules", key="copy_selected_routing_rules"):
+        if not mapping_complete or not project_id_map:
+            st.error("Please map every selected source project to a target project.")
             return
-
-        st.write(rule_ids)
-        
-        new_rules_mapping = {}
-        for rid in rule_ids:
-            rule_details = source_auth.get_routing_by_id(rid)
-            if rule_details is None:
-                st.warning(f"Could not retrieve details for routing rule {rid}")
-                continue
-            original_from = rule_details.get("fromProjectId")
-            original_to = rule_details.get("toProjectId")
-            # Only process the rule if both IDs are present in the mapping.
-            if original_from in st.session_state["project_map"] and original_to in st.session_state["project_map"]:
-                rule_details["fromProjectId"] = st.session_state["project_map"][original_from]
-                rule_details["toProjectId"] = st.session_state["project_map"][original_to]
-            else:
-                st.info(f"Skipping rule {rid}: project mapping incomplete (from: {original_from}, to: {original_to})")
-                continue
-
-            # Remove fields that should not be part of the creation payload.
-            for field in ["id", "createdAt", "updatedAt"]:
-                rule_details.pop(field, None)
-            # Create new routing rule using target_auth.
-            new_rule = target_auth.create_routing_rule(rule_details)
-            if new_rule:
-                new_rules_mapping[rid] = new_rule.get("id")
-            else:
-                st.error(f"Failed to create new routing rule for original rule {rid}")
-        st.subheader("Routing Rule Mapping (Original ID → New ID)")
-        st.write(new_rules_mapping)
+        copy_routing_rules_with_map(source_auth, target_auth, project_id_map, project_names)
 
 # --- Clone from Template Company Section ---
 ALLOWED_CLIENT_ID = "Lh8CbOZDvxLegwX21aLAjenUCbesYRia"
@@ -349,11 +596,18 @@ def clone_by_project_setup_section():
             else:
                 st.error(f"Failed to retrieve details for project '{project_name}'.")
 
+        project_name_map = {}
+        for orig_id, new_id in project_id_map.items():
+            for proj_id, proj_name in selected_projects:
+                if proj_id == orig_id:
+                    project_name_map[orig_id] = proj_name
+                    project_name_map[new_id] = proj_name
+                    break
+
         st.session_state["project_map"] = project_id_map
+        st.session_state["project_name_map"] = project_name_map
 
         # Automatically copy routing rules for the mapped projects
-        st.subheader("Copying Routing Rules")
-        new_rules_mapping = {}
         # Ensure auth objects are present
         if "source_auth" not in st.session_state or "target_auth" not in st.session_state:
             st.error("Both source and target authentication are required to copy routing rules.")
@@ -361,46 +615,12 @@ def clone_by_project_setup_section():
             source_auth_local = st.session_state["source_auth"]
             target_auth_local = st.session_state["target_auth"]
 
-            # Create a reverse mapping for project names
-            project_name_map = {}
-            for orig_id, new_id in project_id_map.items():
-                for proj_id, proj_name in selected_projects:
-                    if proj_id == orig_id:
-                        project_name_map[new_id] = proj_name
-                        break
-
-            rule_ids = source_auth_local.get_all_routing_rule_ids(limit=100)
-            if rule_ids is None:
-                st.error("Failed to retrieve routing rule IDs.")
-            else:
-                for rid in rule_ids:
-                    rule_details = source_auth_local.get_routing_by_id(rid)
-                    if rule_details is None:
-                        st.warning(f"Could not retrieve details for routing rule {rid}")
-                        continue
-                    original_from = rule_details.get("fromProjectId")
-                    original_to = rule_details.get("toProjectId")
-                    # Only process the rule if both IDs are present in the mapping.
-                    if original_from in project_id_map and original_to in project_id_map:
-                        new_from = project_id_map[original_from]
-                        new_to = project_id_map[original_to]
-                        rule_details["fromProjectId"] = new_from
-                        rule_details["toProjectId"] = new_to
-                    else:
-                        continue
-
-                    for field in ["id", "createdAt", "updatedAt"]:
-                        rule_details.pop(field, None)
-
-                    new_rule = target_auth_local.create_routing_rule(rule_details)
-                    if new_rule:
-                        new_rules_mapping[rid] = new_rule.get("id")
-                        # Get project names for the success message
-                        from_project_name = project_name_map.get(new_from, new_from)
-                        to_project_name = project_name_map.get(new_to, new_to)
-                        st.success(f"✅ Successfully copied rule: {from_project_name} → {to_project_name}")
-                    else:
-                        st.error(f"Failed to create new routing rule for original rule {rid}")
+            copy_routing_rules_with_map(
+                source_auth_local,
+                target_auth_local,
+                project_id_map,
+                project_name_map,
+            )
 
 
 # ---------- Get Model ID Section ----------
@@ -440,9 +660,20 @@ def get_model_id_section():
 def _input_target_credentials_only():
     """Show only target credentials; source credentials are loaded from st.secrets."""
     st.header("Company Credentials")
-    st.selectbox("Select an Env: EU / US", (BASE_URL_EU, BASE_URL_US), key="base_url")
+    st.selectbox(
+        "Source API Region",
+        (BASE_URL_EU, BASE_URL_US),
+        key="source_base_url",
+        format_func=lambda url: "EU - api.cloud.hypatos.ai" if url == BASE_URL_EU else "US - api.cloud.hypatos.com",
+    )
     st.info("Source Company credentials are pre-configured (loaded from secrets).")
     st.subheader("Target Company")
+    st.selectbox(
+        "Target API Region",
+        (BASE_URL_EU, BASE_URL_US),
+        key="target_base_url",
+        format_func=lambda url: "EU - api.cloud.hypatos.ai" if url == BASE_URL_EU else "US - api.cloud.hypatos.com",
+    )
     st.text_input("Target Company client_id", key="targetcompany_user")
     st.text_input("Target Company client_secret", type="password", key="targetcompany_apipw")
 
