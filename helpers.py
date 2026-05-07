@@ -8,21 +8,38 @@ REQUIRED_SCOPES = ["projects.read", "projects.write", "routings.read", "routings
 def input_credentials():
     """Display two columns for source and target credentials."""
     st.header("Company Credentials")
-    env_url = st.selectbox(
-    "Select an Env: EU / US",
-    (BASE_URL_EU, BASE_URL_US),
-    key="base_url"
-    )
     col_source, col_target = st.columns(2)
     with col_source:
         st.subheader("Source Company")
+        st.selectbox(
+            "Source API Region",
+            (BASE_URL_EU, BASE_URL_US),
+            key="source_base_url",
+            format_func=lambda url: "EU - api.cloud.hypatos.ai" if url == BASE_URL_EU else "US - api.cloud.hypatos.com",
+        )
         source_user = st.text_input("Source Company client_id", key="sourcecompany_user")
         source_pw = st.text_input("Source Company client_secret", type="password", key="sourcecompany_apipw")
     with col_target:
         st.subheader("Target Company")
+        st.selectbox(
+            "Target API Region",
+            (BASE_URL_EU, BASE_URL_US),
+            key="target_base_url",
+            format_func=lambda url: "EU - api.cloud.hypatos.ai" if url == BASE_URL_EU else "US - api.cloud.hypatos.com",
+        )
         target_user = st.text_input("Target Company client_id", key="targetcompany_user")
         target_pw = st.text_input("Target Company client_secret", type="password", key="targetcompany_apipw")
     st.write("If source and target are the same, please enter identical credentials.")
+
+
+def get_source_base_url():
+    """Return the selected source API base URL, with a legacy fallback."""
+    return st.session_state.get("source_base_url") or st.session_state.get("base_url") or BASE_URL_EU
+
+
+def get_target_base_url():
+    """Return the selected target API base URL, with a legacy fallback."""
+    return st.session_state.get("target_base_url") or st.session_state.get("base_url") or BASE_URL_EU
 
 def clear_session_state_generic():
     """

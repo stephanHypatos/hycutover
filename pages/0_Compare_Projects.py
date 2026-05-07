@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from deepdiff import DeepDiff
 from auth import HypatosAPI
-from helpers import input_credentials, validate_scopes
+from helpers import get_source_base_url, get_target_base_url, input_credentials, validate_scopes
 
 st.set_page_config(page_title="Compare Project Schemas", page_icon=":yin_yang:")
 
@@ -13,7 +13,8 @@ def authenticate_credentials():
     source_pw = st.session_state.get("sourcecompany_apipw", "")
     target_user = st.session_state.get("targetcompany_user", "")
     target_pw = st.session_state.get("targetcompany_apipw", "")
-    base_url = st.session_state.get("base_url", "")
+    source_base_url = get_source_base_url()
+    target_base_url = get_target_base_url()
 
     errors = False
     if not source_user or not source_pw:
@@ -25,41 +26,43 @@ def authenticate_credentials():
     if errors:
         return
 
-    source_auth = HypatosAPI(source_user, source_pw, base_url)
-    target_auth = HypatosAPI(target_user, target_pw, base_url)
+    source_auth = HypatosAPI(source_user, source_pw, source_base_url)
+    target_auth = HypatosAPI(target_user, target_pw, target_base_url)
     
     if source_auth.authenticate():
-        # Fetch and store source company name
-        source_company = source_auth.get_company_info()
-        if source_company:
-            company_name = source_company.get("name", "Unknown")
-            st.session_state["source_company_name"] = company_name
-            st.info(f"📦 Source Company: **{company_name}**")
-            
-            # Validate scopes
-            if validate_scopes(source_auth, f"Source Company ({company_name})"):
-                st.session_state["source_auth"] = source_auth
-                st.success("Source Authentication succeeded!")
+        if validate_scopes(source_auth, "Source Company"):
+            source_company = source_auth.get_company_info()
+            company_name = source_company.get("name", "Unknown") if source_company else "Unknown"
+            if source_company:
+                st.session_state["source_company_name"] = company_name
+                st.info(f"📦 Source Company: **{company_name}**")
             else:
+                st.error("Source credentials authenticated, but company details could not be fetched. Please verify the credentials have `companies.read` for the selected API region.")
                 st.session_state.pop("source_auth", None)
+                return
+            st.session_state["source_auth"] = source_auth
+            st.success("Source Authentication succeeded!")
+        else:
+            st.session_state.pop("source_auth", None)
     else:
         error_msg = source_auth.last_error or "Unknown error occurred"
         st.error(f"❌ Source Authentication failed\n\n**Error:** {error_msg}")
     
     if target_auth.authenticate():
-        # Fetch and store target company name
-        target_company = target_auth.get_company_info()
-        if target_company:
-            company_name = target_company.get("name", "Unknown")
-            st.session_state["target_company_name"] = company_name
-            st.info(f"📦 Target Company: **{company_name}**")
-            
-            # Validate scopes
-            if validate_scopes(target_auth, f"Target Company ({company_name})"):
-                st.session_state["target_auth"] = target_auth
-                st.success("Target Authentication succeeded!")
+        if validate_scopes(target_auth, "Target Company"):
+            target_company = target_auth.get_company_info()
+            company_name = target_company.get("name", "Unknown") if target_company else "Unknown"
+            if target_company:
+                st.session_state["target_company_name"] = company_name
+                st.info(f"📦 Target Company: **{company_name}**")
             else:
+                st.error("Target credentials authenticated, but company details could not be fetched. Please verify the credentials have `companies.read` for the selected API region.")
                 st.session_state.pop("target_auth", None)
+                return
+            st.session_state["target_auth"] = target_auth
+            st.success("Target Authentication succeeded!")
+        else:
+            st.session_state.pop("target_auth", None)
     else:
         error_msg = target_auth.last_error or "Unknown error occurred"
         st.error(f"❌ Target Authentication failed\n\n**Error:** {error_msg}")
