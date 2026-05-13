@@ -13,6 +13,11 @@ from config import BASE_URL_EU, BASE_URL_US
 
 st.set_page_config(page_title="Clone Projects", page_icon=":cyclone:")
 
+
+def _project_name_with_affixes(project_name, prefix="", suffix=""):
+    return f"{prefix or ''}{project_name}{suffix or ''}"
+
+
 # --- Authentication Section (Always at Top) ---
 def authenticate_credentials():
     """Authenticate both source and target credentials and store them separately."""
@@ -125,6 +130,11 @@ def copy_projects_section():
                 st.write(f"Selected Model ID: {selected_model_id}")
                 break
 
+    col_prefix, col_suffix = st.columns(2)
+    with col_prefix:
+        project_name_prefix = st.text_input("Add Prefix", key="copy_projects_name_prefix")
+    with col_suffix:
+        project_name_suffix = st.text_input("Add Suffix", key="copy_projects_name_suffix")
 
     project_list = [(proj["id"], proj["name"]) for proj in projects]
     st.subheader("Select Projects to Copy")
@@ -145,7 +155,11 @@ def copy_projects_section():
             project_details = source_auth.get_project_by_id(project_id)
             project_schema = source_auth.get_project_schema(project_id)
             if project_details and project_schema:
-                final_project_name = project_name
+                final_project_name = _project_name_with_affixes(
+                    project_name,
+                    project_name_prefix,
+                    project_name_suffix,
+                )
 
                 new_project_payload = {
                     "name": final_project_name,
@@ -163,7 +177,7 @@ def copy_projects_section():
                     new_project = response.json()
                     new_project_id = new_project.get("id")
                     project_id_map[project_id] = new_project_id
-                    project_name_map[project_id] = final_project_name
+                    project_name_map[project_id] = project_name
                     project_name_map[new_project_id] = final_project_name
                     st.success(f"Project '{final_project_name}' created successfully!")
                 else:
@@ -534,6 +548,12 @@ def clone_by_project_setup_section():
                 st.write(f"Selected Model ID: {selected_model_id}")
                 break
 
+    col_prefix, col_suffix = st.columns(2)
+    with col_prefix:
+        setup_name_prefix = st.text_input("Add Prefix", key="setup_projects_name_prefix")
+    with col_suffix:
+        setup_name_suffix = st.text_input("Add Suffix", key="setup_projects_name_suffix")
+
     # Setup selection.
     st.subheader("Select Project Setup")
     setup = st.radio(
@@ -574,8 +594,13 @@ def clone_by_project_setup_section():
             project_details = source_auth.get_project_by_id(project_id)
             project_schema = source_auth.get_project_schema(project_id)
             if project_details and project_schema:
+                final_project_name = _project_name_with_affixes(
+                    project_name,
+                    setup_name_prefix,
+                    setup_name_suffix,
+                )
                 new_project_payload = {
-                    "name": project_name,
+                    "name": final_project_name,
                     "note": project_details.get("note", ""),
                     "ocr": project_details.get("ocr", {}),
                     "extractionModelId": selected_model_id,
@@ -590,9 +615,9 @@ def clone_by_project_setup_section():
                     new_project = response.json()
                     new_project_id = new_project.get("id")
                     project_id_map[project_id] = new_project_id
-                    st.success(f"Project '{project_name}' created successfully!")
+                    st.success(f"Project '{final_project_name}' created successfully!")
                 else:
-                    st.error(f"Failed to create project '{project_name}'. Status code: {response.status_code}")
+                    st.error(f"Failed to create project '{final_project_name}'. Status code: {response.status_code}")
             else:
                 st.error(f"Failed to retrieve details for project '{project_name}'.")
 
@@ -601,7 +626,11 @@ def clone_by_project_setup_section():
             for proj_id, proj_name in selected_projects:
                 if proj_id == orig_id:
                     project_name_map[orig_id] = proj_name
-                    project_name_map[new_id] = proj_name
+                    project_name_map[new_id] = _project_name_with_affixes(
+                        proj_name,
+                        setup_name_prefix,
+                        setup_name_suffix,
+                    )
                     break
 
         st.session_state["project_map"] = project_id_map
