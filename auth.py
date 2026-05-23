@@ -1,3 +1,5 @@
+import unicodedata
+import urllib.parse
 import requests
 from requests.auth import HTTPBasicAuth
 
@@ -295,7 +297,14 @@ class HypatosAPI:
         headers = self.get_headers()
         headers["Content-Type"] = content_type
         if filename:
-            headers["X-Hy-Filename"] = filename
+            # Normalize to NFC so composed characters (e.g. ü = ü) are used
+            # instead of NFD decomposed forms that fall outside Latin-1.
+            nfc_name = unicodedata.normalize("NFC", filename)
+            try:
+                nfc_name.encode("latin-1")
+                headers["X-Hy-Filename"] = nfc_name
+            except UnicodeEncodeError:
+                headers["X-Hy-Filename"] = urllib.parse.quote(nfc_name)
         try:
             response = requests.post(url, data=file_bytes, headers=headers)
             response.raise_for_status()
