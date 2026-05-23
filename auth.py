@@ -286,6 +286,48 @@ class HypatosAPI:
             print(f"Unexpected error while fetching company: {err}")
         return None
 
+    def upload_file(self, file_bytes: bytes, content_type: str, filename: str = None):
+        """
+        Uploads a file via POST /files using raw binary body.
+        Returns the response dict (contains 'id') on success, or None on failure.
+        """
+        url = f"{self.base_url}/files"
+        headers = self.get_headers()
+        headers["Content-Type"] = content_type
+        if filename:
+            headers["X-Hy-Filename"] = filename
+        try:
+            response = requests.post(url, data=file_bytes, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while uploading file: {self.last_error}")
+        except Exception as err:
+            self.last_error = str(err)
+            print(f"Unexpected error while uploading file: {err}")
+        return None
+
+    def process_file_batch(self, file_ids: list, project_id: str):
+        """
+        Triggers batch processing via POST /cases/process-file-batch.
+        Returns the response dict on success, or None on failure.
+        """
+        url = f"{self.base_url}/cases/process-file-batch"
+        headers = self.get_headers()
+        payload = {"fileIds": file_ids, "projectId": project_id}
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            return response.json() if response.content else {"status": "accepted"}
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while processing file batch: {self.last_error}")
+        except Exception as err:
+            self.last_error = str(err)
+            print(f"Unexpected error while processing file batch: {err}")
+        return None
+
     def get_company_info(self, company_id: str = None):
         """
         Retrieves company information using the authenticated client's credentials.
