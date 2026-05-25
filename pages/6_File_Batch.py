@@ -1,4 +1,5 @@
 import streamlit as st
+import requests
 from auth import HypatosAPI
 from config import BASE_URL_EU, BASE_URL_US
 
@@ -84,28 +85,35 @@ def _document_lookup_section():
         if not doc_id.strip():
             st.error("Please enter a document ID.")
         else:
-            doc = auth.get_document_by_id(doc_id.strip())
-            if doc is None:
-                err = auth.last_error or "Unknown error"
-                st.error(f"Failed to fetch document: {err}")
-            else:
-                case_id = doc.get("caseId")
-                files = doc.get("files") or []
+            url = f"{auth.base_url}/documents/{doc_id.strip()}"
+            try:
+                response = requests.get(url, headers=auth.get_headers())
+                response.raise_for_status()
+                doc = response.json()
+            except requests.HTTPError as e:
+                st.error(f"Failed to fetch document: HTTP {e.response.status_code} — {e.response.text}")
+                return
+            except Exception as e:
+                st.error(f"Failed to fetch document: {e}")
+                return
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Case ID", case_id or "—")
-                with col2:
-                    st.metric("Files", len(files))
+            case_id = doc.get("caseId")
+            files = doc.get("files") or []
 
-                if files:
-                    st.subheader("Files")
-                    for f in files:
-                        main_label = " ★ main" if f.get("mainFile") else ""
-                        st.write(f"- `{f.get('id')}` — **{f.get('type')}**{main_label}")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Case ID", case_id or "—")
+            with col2:
+                st.metric("Files", len(files))
 
-                st.subheader("Full Document JSON")
-                st.json(doc)
+            if files:
+                st.subheader("Files")
+                for f in files:
+                    main_label = " ★ main" if f.get("mainFile") else ""
+                    st.write(f"- `{f.get('id')}` — **{f.get('type')}**{main_label}")
+
+            st.subheader("Full Document JSON")
+            st.json(doc)
 
 
 def _process_batch_section():
