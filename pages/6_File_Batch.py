@@ -75,6 +75,39 @@ def _upload_section():
             st.rerun()
 
 
+def _document_lookup_section():
+    st.header("Document Lookup")
+    auth = st.session_state["batch_auth"]
+
+    doc_id = st.text_input("Document ID", key="batch_doc_id_input")
+    if st.button("Fetch Document", key="batch_fetch_doc"):
+        if not doc_id.strip():
+            st.error("Please enter a document ID.")
+        else:
+            doc = auth.get_document_by_id(doc_id.strip())
+            if doc is None:
+                err = auth.last_error or "Unknown error"
+                st.error(f"Failed to fetch document: {err}")
+            else:
+                case_id = doc.get("caseId")
+                files = doc.get("files") or []
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Case ID", case_id or "—")
+                with col2:
+                    st.metric("Files", len(files))
+
+                if files:
+                    st.subheader("Files")
+                    for f in files:
+                        main_label = " ★ main" if f.get("mainFile") else ""
+                        st.write(f"- `{f.get('id')}` — **{f.get('type')}**{main_label}")
+
+                st.subheader("Full Document JSON")
+                st.json(doc)
+
+
 def _process_batch_section():
     st.header("Process Batch")
     auth = st.session_state["batch_auth"]
@@ -136,6 +169,8 @@ def main():
 
     st.divider()
     _upload_section()
+    st.divider()
+    _document_lookup_section()
     st.divider()
     _process_batch_section()
 

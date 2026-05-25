@@ -288,6 +288,24 @@ class HypatosAPI:
             print(f"Unexpected error while fetching company: {err}")
         return None
 
+    def get_document_by_id(self, document_id: str):
+        """
+        Retrieves a document by ID via GET /documents/{id}.
+        Returns the document dict on success, or None on failure.
+        """
+        url = f"{self.base_url}/documents/{document_id}"
+        try:
+            response = requests.get(url, headers=self.get_headers())
+            response.raise_for_status()
+            return response.json()
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while fetching document {document_id}: {self.last_error}")
+        except Exception as err:
+            self.last_error = str(err)
+            print(f"Unexpected error while fetching document {document_id}: {err}")
+        return None
+
     def upload_file(self, file_bytes: bytes, content_type: str, filename: str = None):
         """
         Uploads a file via POST /files using raw binary body.
