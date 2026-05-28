@@ -8,7 +8,25 @@ There are three steps:
 
 1. **Upload** — each file is uploaded individually and a `fileId` is returned
 2. **Process** — all `fileId`s are submitted together as a batch to a specific project
-3. **Track** — the resulting documents are polled by `fileId` to monitor their processing state
+3. **Track** — the resulting documents are polled by `projectId` and matched against uploaded fileIds
+
+---
+
+## Important: Files vs Documents
+
+Multiple uploaded files can be **merged into a single document** by the API. For example, uploading an invoice PDF and a portal invoice XML may produce one document containing both as entries in its `files` array.
+
+```
+Upload 2 files  →  1 document created
+
+fileId A  ──┐
+            ├──▶  document { fileId: A,  files: [{id: A, mainFile: true}, {id: B, mainFile: false}] }
+fileId B  ──┘
+```
+
+Because of this, **do not track by querying `GET /documents?fileId={id}` per file** — this only matches the top-level `fileId` field (the main file) and will miss non-main files.
+
+Instead, query by `projectId` and match against **both** the top-level `fileId` and every entry in `document.files[].id`.
 
 ---
 
@@ -18,7 +36,7 @@ There are three steps:
 |---|---|---|---|
 | Upload | `POST` | `/files` | Upload a single file, returns `fileId` |
 | Process | `POST` | `/cases/process-file-batch` | Submit fileIds to a project for processing |
-| Track | `GET` | `/documents?fileId={fileId}` | Look up the document created from a file |
+| Track | `GET` | `/documents?projectId={id}` | List documents for a project to match against uploaded fileIds |
 | Detail | `GET` | `/documents/{id}` | Get full document details by document ID |
 
 ### Authentication
@@ -86,34 +104,51 @@ Processing is **asynchronous** — the API accepts the request immediately but t
 
 ## Step 3 — Track Document Status
 
-Poll the documents list endpoint using the `fileId` to find the document created from each uploaded file.
+### Why not query by fileId directly?
+
+`GET /documents?fileId={id}` only matches the top-level `fileId` field, which is the **main file** of a document. If your file was merged as a non-main attachment, it will not appear in this query.
+
+### Correct approach: query by projectId, match all fileIds
+
+Query documents for the project and check whether any of your uploaded fileIds appears in either:
+- `document.fileId` (top-level, main file), **or**
+- any `id` inside `document.files[]`
 
 ```
-GET /documents?fileId=9f943413-c1a1-43c1-b678-0439d234cabe
+GET /documents?projectId=69e1e5cf0707eff1ad8b5dbb&limit=50
 Authorization: Bearer <token>
 ```
 
-**Response:**
+**Matching logic (pseudocode):**
+```
+uploaded_file_ids = { "9f943413...", "360d672d...", "6eb84ff7..." }
+
+for each document in response.data:
+    all_ids_in_doc = { document.fileId } ∪ { f.id for f in document.files }
+
+    if all_ids_in_doc ∩ uploaded_file_ids is not empty:
+        → this document belongs to our batch
+        → record document.id, document.state, document.title, document.caseId
+```
+
+**Example response entry:**
 ```json
 {
-  "data": [
-    {
-      "id": "6a18492144ae241453d0e15a",
-      "projectId": "69e1e5cf0707eff1ad8b5dbb",
-      "fileId": "9f943413-c1a1-43c1-b678-0439d234cabe",
-      "caseId": "019e6edd-a989-784f-98c6-7c24765b605e",
-      "title": "Supplier_invoice_from_Glacis_Beisl_...",
-      "state": "done",
-      "files": [
-        { "id": "9f943413-c1a1-43c1-b678-0439d234cabe", "type": "invoice", "mainFile": true },
-        { "id": "360d672d-c6e7-4539-b897-79c99f712aa4", "type": "portalinvoice", "mainFile": false }
-      ]
-    }
+  "id": "6a15b6ed988f9acd1d84091d",
+  "projectId": "69e1e5cf0707eff1ad8b5dbb",
+  "fileId": "21ef4211-a0b3-480d-b634-bcd0f792712f",
+  "caseId": "019e64d2-86e1-7735-8792-55bcbfd5f993",
+  "title": "Supplier_invoice_from_Dussmann_Austria_GmbH_...",
+  "state": "done",
+  "files": [
+    { "id": "21ef4211-a0b3-480d-b634-bcd0f792712f", "type": "invoice",    "mainFile": true  },
+    { "id": "40e1d2bc-4aff-4e98-9d48-d2ea63d7682f", "type": "attachment", "mainFile": false },
+    { "id": "6eb84ff7-87aa-44b3-801e-f1d4247e0420", "type": "attachment", "mainFile": false }
   ]
 }
 ```
 
-If `data` is empty, the document has not been created yet — retry after a short delay.
+Here, uploading 3 files produced 1 document. Querying `?fileId=40e1d2bc...` would have returned nothing — only the intersection approach finds it.
 
 ---
 
@@ -147,7 +182,7 @@ sequenceDiagram
     loop For each file
         Client->>API: POST /files<br/>(raw binary, Content-Type, X-Hy-Filename)
         API-->>Client: 201 { "id": "fileId" }
-        Client->>Client: Store filename → fileId mapping
+        Client->>Client: Store filename → fileId in uploaded_file_ids set
     end
 
     Note over Client,API: Step 2 — Trigger Processing
@@ -157,18 +192,25 @@ sequenceDiagram
 
     Note over Client,API: Step 3 — Poll for Status
 
-    loop For each fileId (until terminal state)
-        Client->>API: GET /documents?fileId={fileId}
-        alt Document not yet created
-            API-->>Client: { "data": [] }
-            Client->>Client: Wait and retry
-        else Document found
-            API-->>Client: { "data": [{ "id", "state", "title", "caseId", ... }] }
-            Client->>Client: Update tracking record with documentId + state
+    loop Poll until all fileIds are resolved or timeout
+        Client->>API: GET /documents?projectId={projectId}&limit=50
+        API-->>Client: { "data": [ ...documents... ] }
+
+        loop For each document in response
+            Client->>Client: all_ids = document.fileId + document.files[].id
+            alt any id in all_ids matches uploaded_file_ids
+                Client->>Client: Record document.id, state, title, caseId<br/>Mark matched fileIds as resolved
+            end
+        end
+
+        alt unresolved fileIds remain
+            Client->>Client: Wait, then retry (exponential backoff)
+        else all fileIds resolved
+            Client->>Client: Stop polling
         end
     end
 
-    Note over Client: Evaluate final states
+    Note over Client: Evaluate final states per document
 
     alt state = done | doneAutomatically
         Client->>Client: ✅ Mark as Success
@@ -185,27 +227,31 @@ sequenceDiagram
 
 ## Tracking Data Model
 
-Maintain a record per uploaded file throughout the lifecycle:
+Track at the **document** level, not the file level. One document may correspond to multiple uploaded files.
 
 ```json
 {
-  "filename": "invoice.pdf",
-  "fileId": "9f943413-c1a1-43c1-b678-0439d234cabe",
-  "documentId": "6a18492144ae241453d0e15a",
-  "title": "Supplier_invoice_from_Glacis_Beisl_...",
-  "caseId": "019e6edd-a989-784f-98c6-7c24765b605e",
+  "documentId": "6a15b6ed988f9acd1d84091d",
+  "title": "Supplier_invoice_from_Dussmann_Austria_GmbH_...",
+  "caseId": "019e64d2-86e1-7735-8792-55bcbfd5f993",
   "state": "done",
-  "category": "success"
+  "category": "success",
+  "matchedFiles": [
+    { "filename": "invoice.pdf",    "fileId": "21ef4211-...", "mainFile": true  },
+    { "filename": "attachment1.pdf","fileId": "40e1d2bc-...", "mainFile": false },
+    { "filename": "attachment2.xml","fileId": "6eb84ff7-...", "mainFile": false }
+  ]
 }
 ```
 
-`documentId`, `title`, `caseId`, `state`, and `category` are populated after the first successful poll in Step 3. `fileId` and `filename` are set at upload time.
+`matchedFiles` links back to the original filenames uploaded in Step 1 via the `fileId`.
 
 ---
 
 ## Polling Recommendations
 
 - Start polling after a short initial delay (e.g. 5–10 seconds) to allow processing to begin
-- Use exponential backoff if `data` is still empty: 5s → 10s → 20s → 30s (cap at 30s)
-- Stop polling once the document reaches a **terminal state**: `done`, `doneAutomatically`, `rejected`, or any `failed*` state
+- Use exponential backoff if no new documents are matched: 5s → 10s → 20s → 30s (cap at 30s)
+- Paginate if the project has many documents: increment `offset` until `data` is empty or all fileIds are resolved
+- Stop polling a document once it reaches a **terminal state**: `done`, `doneAutomatically`, `rejected`, or any `failed*` state
 - Set a maximum polling duration (e.g. 10 minutes) and mark as `timeout` if no terminal state is reached
