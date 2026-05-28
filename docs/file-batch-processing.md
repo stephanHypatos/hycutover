@@ -156,16 +156,21 @@ Here, uploading 3 files produced 1 document. Querying `?fileId=40e1d2bc...` woul
 
 | State | Category | Meaning |
 |---|---|---|
-| `done` | ✅ Success | Document processed and confirmed |
-| `doneAutomatically` | ✅ Success | Document processed and auto-confirmed |
-| `rejected` | ↩️ Rejected | Document was rejected and returned to supplier |
+| `transferred` | ✅ Success | Document successfully transferred to the target system |
+| `done` | ⏳ Not Yet Transferred | Processed and confirmed, awaiting transfer |
+| `doneAutomatically` | ⏳ Not Yet Transferred | Auto-confirmed, awaiting transfer |
+| `extracted` | ⏳ Not Yet Transferred | Data extracted, awaiting confirmation |
+| `inCompletion` | ⏳ Not Yet Transferred | Completion in progress |
+| `new` | ⏳ Not Yet Transferred | Document received, not yet processed |
+| `reviewRequired` | ⏳ Not Yet Transferred | Flagged for manual review |
+| `processing` | ⏳ Not Yet Transferred | Currently being processed |
+| `split` | ⏳ Not Yet Transferred | Document is being split into multiple documents |
 | `failed` | ❌ Failed | Processing failed |
-| `failedRetrying` | ❌ Failed | Processing failed, retry in progress |
-| `extracted` | ⏳ In Progress | Data extracted, awaiting confirmation |
-| `processing` | ⏳ In Progress | Currently being processed |
-| `waitingForConfirmation` | ⏳ In Progress | Awaiting human review in Studio |
+| `junk` | ❌ Failed | Document identified as junk/unprocessable |
+| `transferFailed` | ❌ Failed | Transfer to target system failed |
+| `rejected` | ↩️ Rejected | Document was rejected and returned to supplier |
 
-> **Terminal states** (no further changes expected): `done`, `doneAutomatically`, `rejected`, `failed`
+> **Terminal states** (no further changes expected): `transferred`, `failed`, `junk`, `transferFailed`, `rejected`
 
 ---
 
@@ -212,14 +217,14 @@ sequenceDiagram
 
     Note over Client: Evaluate final states per document
 
-    alt state = done | doneAutomatically
-        Client->>Client: ✅ Mark as Success
+    alt state = transferred
+        Client->>Client: ✅ Success
     else state = rejected
-        Client->>Client: ↩️ Mark as Rejected
-    else state contains failed
-        Client->>Client: ❌ Mark as Failed
+        Client->>Client: ↩️ Rejected
+    else state = failed | junk | transferFailed
+        Client->>Client: ❌ Failed
     else
-        Client->>Client: ⏳ Still in progress — keep polling
+        Client->>Client: ⏳ Not yet transferred — keep polling
     end
 ```
 
@@ -253,5 +258,5 @@ Track at the **document** level, not the file level. One document may correspond
 - Start polling after a short initial delay (e.g. 5–10 seconds) to allow processing to begin
 - Use exponential backoff if no new documents are matched: 5s → 10s → 20s → 30s (cap at 30s)
 - Paginate if the project has many documents: increment `offset` until `data` is empty or all fileIds are resolved
-- Stop polling a document once it reaches a **terminal state**: `done`, `doneAutomatically`, `rejected`, or any `failed*` state
+- Stop polling a document once it reaches a **terminal state**: `transferred`, `rejected`, `failed`, `junk`, or `transferFailed`
 - Set a maximum polling duration (e.g. 10 minutes) and mark as `timeout` if no terminal state is reached
