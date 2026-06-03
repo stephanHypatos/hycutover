@@ -4,11 +4,12 @@
 
 This guide describes how to upload files, trigger batch processing, and track the outcome of each document using the Hypatos API.
 
-There are three steps:
+There are four steps:
 
 1. **Upload** — each file is uploaded individually and a `fileId` is returned
 2. **Process** — all `fileId`s are submitted together as a batch to a specific project
 3. **Track** — the resulting documents are polled by `projectId` and matched against uploaded fileIds
+4. **Enrich** — once a document is matched, fetch its full detail to collect `entities.errorCodes`
 
 ---
 
@@ -37,7 +38,9 @@ Instead, query by `projectId` and match against **both** the top-level `fileId` 
 | Upload | `POST` | `/files` | Upload a single file, returns `fileId` |
 | Process | `POST` | `/cases/process-file-batch` | Submit fileIds to a project for processing |
 | Track | `GET` | `/documents?projectId={id}` | List documents for a project to match against uploaded fileIds |
-| Detail | `GET` | `/documents/{id}` | Get full document details by document ID |
+| Enrich | `GET` | `/documents/{id}` | Fetch full document detail including `entities.errorCodes` |
+
+> **Why two document calls?** The list endpoint (`GET /documents`) returns a lightweight representation that does not include `entities`. The `entities.errorCodes` field is only available in the full detail response from `GET /documents/{id}`.
 
 ### Authentication
 
@@ -152,6 +155,47 @@ Here, uploading 3 files produced 1 document. Querying `?fileId=40e1d2bc...` woul
 
 ---
 
+## Step 4 — Enrich with Error Codes
+
+Once a document is matched in Step 3, fetch its full detail to retrieve `entities.errorCodes`. This field is **not available** in the list response.
+
+```
+GET /documents/6a15b6ed988f9acd1d84091d
+Authorization: Bearer <token>
+```
+
+The relevant part of the response:
+
+```json
+{
+  "id": "6a15b6ed988f9acd1d84091d",
+  "state": "transferFailed",
+  "entities": {
+    "errorCodes": [
+      { "value": "E04 - Missing Time of Supply" },
+      { "value": "E05 - Currency Missing" },
+      { "value": "E07 - Sender Data Missing" },
+      { "value": "E18 - Gross Total Missing" },
+      { "value": "W17 - BCA mismatch" }
+    ]
+  }
+}
+```
+
+Extract the `value` string from each entry in `entities.errorCodes`. If the field is absent or the array is empty, record an empty list.
+
+**Extraction logic (pseudocode):**
+```
+detail = GET /documents/{documentId}
+error_codes = [ e["value"] for e in detail.entities.errorCodes ]
+             if detail.entities and detail.entities.errorCodes
+             else []
+```
+
+> **When to call this:** Fetch the detail as soon as the document is first matched (Step 3), and again whenever the state changes, as error codes may be added or updated during processing.
+
+---
+
 ## Document States
 
 | State | Category | Meaning |
@@ -205,6 +249,11 @@ sequenceDiagram
             Client->>Client: all_ids = document.fileId + document.files[].id
             alt any id in all_ids matches uploaded_file_ids
                 Client->>Client: Record document.id, state, title, caseId<br/>Mark matched fileIds as resolved
+
+                Note over Client,API: Step 4 — Enrich with Error Codes
+                Client->>API: GET /documents/{documentId}
+                API-->>Client: Full document detail
+                Client->>Client: Extract entities.errorCodes[].value<br/>Store in tracking record
             end
         end
 
@@ -222,7 +271,7 @@ sequenceDiagram
     else state = rejected
         Client->>Client: ↩️ Rejected
     else state = failed | junk | transferFailed
-        Client->>Client: ❌ Failed
+        Client->>Client: ❌ Failed — check errorCodes for details
     else
         Client->>Client: ⏳ Not yet transferred — keep polling
     end
@@ -239,17 +288,32 @@ Track at the **document** level, not the file level. One document may correspond
   "documentId": "6a15b6ed988f9acd1d84091d",
   "title": "Supplier_invoice_from_Dussmann_Austria_GmbH_...",
   "caseId": "019e64d2-86e1-7735-8792-55bcbfd5f993",
-  "state": "done",
-  "category": "success",
+  "state": "transferFailed",
+  "category": "failed",
+  "errorCodes": [
+    "E04 - Missing Time of Supply",
+    "E05 - Currency Missing",
+    "E07 - Sender Data Missing",
+    "E18 - Gross Total Missing",
+    "W17 - BCA mismatch"
+  ],
   "matchedFiles": [
-    { "filename": "invoice.pdf",    "fileId": "21ef4211-...", "mainFile": true  },
-    { "filename": "attachment1.pdf","fileId": "40e1d2bc-...", "mainFile": false },
-    { "filename": "attachment2.xml","fileId": "6eb84ff7-...", "mainFile": false }
+    { "filename": "invoice.pdf",     "fileId": "21ef4211-...", "mainFile": true  },
+    { "filename": "attachment1.pdf", "fileId": "40e1d2bc-...", "mainFile": false },
+    { "filename": "attachment2.xml", "fileId": "6eb84ff7-...", "mainFile": false }
   ]
 }
 ```
 
-`matchedFiles` links back to the original filenames uploaded in Step 1 via the `fileId`.
+| Field | Source | Notes |
+|---|---|---|
+| `documentId` | `GET /documents` list | Matched via fileId intersection |
+| `title` | `GET /documents` list | Human-readable document title |
+| `caseId` | `GET /documents` list | Links to the case in the platform |
+| `state` | `GET /documents` list | Re-fetched on each poll cycle |
+| `category` | Derived | success / not-yet-transferred / failed / rejected |
+| `errorCodes` | `GET /documents/{id}` | Extracted from `entities.errorCodes[].value` |
+| `matchedFiles` | Upload step + list match | Maps filenames to their fileIds |
 
 ---
 
@@ -259,4 +323,5 @@ Track at the **document** level, not the file level. One document may correspond
 - Use exponential backoff if no new documents are matched: 5s → 10s → 20s → 30s (cap at 30s)
 - Paginate if the project has many documents: increment `offset` until `data` is empty or all fileIds are resolved
 - Stop polling a document once it reaches a **terminal state**: `transferred`, `rejected`, `failed`, `junk`, or `transferFailed`
+- Re-fetch `GET /documents/{id}` on each poll cycle for non-terminal documents — `errorCodes` may be updated as processing progresses
 - Set a maximum polling duration (e.g. 10 minutes) and mark as `timeout` if no terminal state is reached
