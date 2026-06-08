@@ -151,17 +151,35 @@ def _copy_one_document(source_doc_id: str, source_auth, target_auth, target_proj
         return {"status": "failed", "step": "fetch_metadata", "sourceDocId": source_doc_id}
 
     doc_meta = r.json()
-    files_in_doc = doc_meta.get("files") or []
-    if not files_in_doc:
-        st.error("Document has no files attached.")
+
+    # Build a deduped file list anchored on the guaranteed top-level fileId.
+    # doc.fileId is always the main file; doc.files[] may add attachments.
+    main_file_id = doc_meta.get("fileId")
+    files_array = doc_meta.get("files") or []
+
+    seen_ids: set = set()
+    files_to_download = []
+
+    if main_file_id:
+        seen_ids.add(main_file_id)
+        main_type = next((f.get("type", "unknown") for f in files_array if f.get("id") == main_file_id), "invoice")
+        files_to_download.append({"id": main_file_id, "type": main_type, "mainFile": True})
+
+    for f in files_array:
+        if f.get("id") and f["id"] not in seen_ids:
+            seen_ids.add(f["id"])
+            files_to_download.append(f)
+
+    if not files_to_download:
+        st.error("Document has no fileId and no files attached.")
         return {"status": "failed", "step": "no_files", "sourceDocId": source_doc_id}
 
-    st.write(f"Found **{len(files_in_doc)}** file(s): "
-             + ", ".join(f"`{f['type']}`" for f in files_in_doc))
+    st.write(f"Found **{len(files_to_download)}** file(s): "
+             + ", ".join(f"`{f['type']}`" for f in files_to_download))
 
-    # Step 2 + 3 — download each file from source, re-upload to target
+    # Step 2 + 3 — download each file from source via GET /files/{id}, re-upload to target
     uploaded_file_ids = []
-    for f in files_in_doc:
+    for f in files_to_download:
         file_id = f["id"]
         file_type = f.get("type", "unknown")
 
