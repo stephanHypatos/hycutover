@@ -365,8 +365,11 @@ def _copy_documents_section():
 def main():
     st.title("Copy Documents")
     st.caption(
-        "Copy documents from a source project/company to a target project/company, "
-        "preserving file content and linking back via `groundTruthDocumentId`."
+        "Downloads files from documents in the source project and re-uploads them to the target project "
+        "using the File Batch Processing endpoint (POST /cases/process-file-batch) — the same endpoint "
+        "used when uploading new files directly. The difference to a regular file upload is that the "
+        "source files come from existing documents rather than local files. Each copied document is "
+        "linked back to its original via groundTruthDocumentId."
     )
 
     input_credentials()
