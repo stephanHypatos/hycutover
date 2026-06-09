@@ -46,36 +46,48 @@ def _authenticate():
     target_auth = HypatosAPI(target_user, target_pw, target_base_url)
 
     if source_auth.authenticate():
-        if validate_scopes(source_auth, "Source Company"):
-            company = source_auth.get_company_info()
-            if company:
-                st.session_state["source_company_name"] = company.get("name", "Unknown")
-                st.info(f"Source Company: **{st.session_state['source_company_name']}**")
-                st.session_state["source_auth"] = source_auth
-                st.success("Source Authentication succeeded!")
-            else:
-                st.error("Source authenticated but company details could not be fetched.")
-                st.session_state.pop("source_auth", None)
-        else:
-            st.session_state.pop("source_auth", None)
+        st.session_state["source_auth"] = source_auth
+        st.success("Source Authentication succeeded!")
     else:
         st.error(f"Source Authentication failed: {source_auth.last_error or 'Unknown error'}")
 
+    # if source_auth.authenticate():
+    #     if validate_scopes(source_auth, "Source Company"):
+    #         company = source_auth.get_company_info()
+    #         if company:
+    #             st.session_state["source_company_name"] = company.get("name", "Unknown")
+    #             st.info(f"Source Company: **{st.session_state['source_company_name']}**")
+    #             st.session_state["source_auth"] = source_auth
+    #             st.success("Source Authentication succeeded!")
+    #         else:
+    #             st.error("Source authenticated but company details could not be fetched.")
+    #             st.session_state.pop("source_auth", None)
+    #     else:
+    #         st.session_state.pop("source_auth", None)
+    # else:
+    #     st.error(f"Source Authentication failed: {source_auth.last_error or 'Unknown error'}")
+
     if target_auth.authenticate():
-        if validate_scopes(target_auth, "Target Company"):
-            company = target_auth.get_company_info()
-            if company:
-                st.session_state["target_company_name"] = company.get("name", "Unknown")
-                st.info(f"Target Company: **{st.session_state['target_company_name']}**")
-                st.session_state["target_auth"] = target_auth
-                st.success("Target Authentication succeeded!")
-            else:
-                st.error("Target authenticated but company details could not be fetched.")
-                st.session_state.pop("target_auth", None)
-        else:
-            st.session_state.pop("target_auth", None)
+        st.session_state["target_auth"] = target_auth
+        st.success("Target Authentication succeeded!")
     else:
         st.error(f"Target Authentication failed: {target_auth.last_error or 'Unknown error'}")
+
+    # if target_auth.authenticate():
+    #     if validate_scopes(target_auth, "Target Company"):
+    #         company = target_auth.get_company_info()
+    #         if company:
+    #             st.session_state["target_company_name"] = company.get("name", "Unknown")
+    #             st.info(f"Target Company: **{st.session_state['target_company_name']}**")
+    #             st.session_state["target_auth"] = target_auth
+    #             st.success("Target Authentication succeeded!")
+    #         else:
+    #             st.error("Target authenticated but company details could not be fetched.")
+    #             st.session_state.pop("target_auth", None)
+    #     else:
+    #         st.session_state.pop("target_auth", None)
+    # else:
+    #     st.error(f"Target Authentication failed: {target_auth.last_error or 'Unknown error'}")
 
 
 # ---------------------------------------------------------------------------
