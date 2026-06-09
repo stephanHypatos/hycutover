@@ -16,8 +16,7 @@ from helpers import (
 
 st.set_page_config(page_title="Copy Documents", page_icon=":card_index:")
 
-_POLL_INTERVAL_S = 4
-_POLL_TIMEOUT_S = 90
+_RETRY_DELAYS_S = [20, 20, 20, 20, 20, 20]  # 6 attempts × 20s = 120s max
 
 
 # ---------------------------------------------------------------------------
@@ -103,27 +102,28 @@ def _parse_doc_ids(excel_file) -> list:
     return [v for v in values if len(v) >= 20 and " " not in v]
 
 
-def _poll_for_new_doc(target_auth, target_project_id: str, uploaded_file_ids: list, timeout_s: int):
+def _find_doc_by_file_id(target_auth, main_file_id: str):
     """
-    Poll GET /documents?projectId=... until a document whose fileId or
-    files[].id intersects with uploaded_file_ids is found, or timeout.
-    Returns the matched document dict, or None on timeout.
+    Query GET /documents?fileId={main_file_id} with up to 6 retries at 20s
+    intervals (20s, 40s, 60s, 80s, 100s, 120s cumulative).
+    Returns the first matching document dict, or None on timeout.
     """
-    uploaded_set = set(uploaded_file_ids)
-    deadline = time.time() + timeout_s
+    for attempt, delay in enumerate(_RETRY_DELAYS_S, 1):
+        cumulative = sum(_RETRY_DELAYS_S[:attempt])
+        st.write(f"⏳ Attempt {attempt}/6 — waiting {delay}s (cumulative: {cumulative}s)…")
+        time.sleep(delay)
 
-    while time.time() < deadline:
         r = requests.get(
             f"{target_auth.base_url}/documents",
             headers=target_auth.get_headers(),
-            params={"projectId": target_project_id, "limit": 50},
+            params={"fileId": main_file_id, "limit": 5},
         )
         if r.status_code == 200:
-            for doc in r.json().get("data", []):
-                all_ids = {doc.get("fileId")} | {f["id"] for f in doc.get("files") or []}
-                if all_ids & uploaded_set:
-                    return doc
-        time.sleep(_POLL_INTERVAL_S)
+            docs = r.json().get("data", [])
+            if docs:
+                return docs[0]
+        else:
+            st.warning(f"API returned {r.status_code} on attempt {attempt}.")
 
     return None
 
@@ -222,17 +222,23 @@ def _copy_one_document(source_doc_id: str, source_auth, target_auth, target_proj
     if batch.status_code not in (200, 201, 202):
         st.error(f"Batch processing failed: HTTP {batch.status_code} — {batch.text}")
         return {"status": "failed", "step": "process_batch", "uploadedFileIds": uploaded_file_ids}
-    st.write("✅ Batch submitted, waiting for document to appear…")
+    st.write("✅ Batch submitted.")
 
-    # Step 5 — poll for the new document
-    new_doc = _poll_for_new_doc(target_auth, target_project_id, uploaded_file_ids, _POLL_TIMEOUT_S)
+    # Step 5 — find the new document by the main fileId via GET /documents?fileId=...
+    # uploaded_file_ids[0] is always the main file (anchored on source doc.fileId)
+    main_uploaded_file_id = uploaded_file_ids[0]
+    st.write(f"🔎 Polling for document with fileId `{main_uploaded_file_id}`…")
+    new_doc = _find_doc_by_file_id(target_auth, main_uploaded_file_id)
+
     if new_doc is None:
         st.warning(
-            f"Document did not appear in target within {_POLL_TIMEOUT_S}s. "
-            "External data could not be set. Uploaded fileIds: "
-            + ", ".join(f"`{fid}`" for fid in uploaded_file_ids)
+            "Document not found after 120s. "
+            "Use the **Retry Pending** button below to try again once the document appears."
         )
-        return {"status": "partial", "step": "poll_timeout", "uploadedFileIds": uploaded_file_ids}
+        pending = st.session_state.get("pending_external_data", [])
+        pending.append({"mainFileId": main_uploaded_file_id, "sourceDocId": source_doc_id})
+        st.session_state["pending_external_data"] = pending
+        return {"status": "partial", "step": "poll_timeout", "sourceDocId": source_doc_id, "mainFileId": main_uploaded_file_id}
 
     new_doc_id = new_doc["id"]
     st.write(f"✅ New document found in target: `{new_doc_id}`")
@@ -309,6 +315,47 @@ def _copy_documents_section():
 
     if not doc_ids:
         return
+
+    # Retry section — shown whenever there are pending external data patches
+    pending = st.session_state.get("pending_external_data", [])
+    if pending:
+        st.warning(f"**{len(pending)}** document(s) are waiting for external data to be set.")
+        st.dataframe(
+            [{"Source Doc ID": p["sourceDocId"], "Main File ID": p["mainFileId"]} for p in pending],
+            use_container_width=True,
+        )
+        if st.button("Retry Pending External Data"):
+            target_auth = st.session_state["target_auth"]
+            still_pending = []
+            for item in pending:
+                r = requests.get(
+                    f"{target_auth.base_url}/documents",
+                    headers=target_auth.get_headers(),
+                    params={"fileId": item["mainFileId"], "limit": 5},
+                )
+                if r.status_code == 200:
+                    docs = r.json().get("data", [])
+                    if docs:
+                        new_doc_id = docs[0]["id"]
+                        ext = requests.post(
+                            f"{target_auth.base_url}/documents/{new_doc_id}/external-data",
+                            json={"groundTruthDocumentId": item["sourceDocId"]},
+                            headers=target_auth.get_headers(),
+                        )
+                        if ext.status_code in (200, 201, 202):
+                            st.success(f"✅ Patched: `{item['sourceDocId']}` → `{new_doc_id}`")
+                        else:
+                            st.error(f"Failed to patch `{item['sourceDocId']}`: HTTP {ext.status_code}")
+                            still_pending.append(item)
+                    else:
+                        st.warning(f"Document still not found for fileId `{item['mainFileId']}`.")
+                        still_pending.append(item)
+                else:
+                    st.warning(f"API error {r.status_code} for fileId `{item['mainFileId']}`.")
+                    still_pending.append(item)
+            st.session_state["pending_external_data"] = still_pending
+            if not still_pending:
+                st.success("All pending patches completed!")
 
     st.divider()
     if st.button("Copy Documents", type="primary"):
