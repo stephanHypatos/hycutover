@@ -1,3 +1,4 @@
+import io
 import time
 import unicodedata
 import urllib.parse
@@ -82,7 +83,6 @@ def _authenticate():
 # ---------------------------------------------------------------------------
 
 def _safe_filename(name: str) -> str:
-    """NFC-normalize a filename so it fits in a Latin-1 HTTP header."""
     nfc = unicodedata.normalize("NFC", name)
     try:
         nfc.encode("latin-1")
@@ -92,22 +92,24 @@ def _safe_filename(name: str) -> str:
 
 
 def _parse_doc_ids(excel_file) -> list:
-    """
-    Read document IDs from the first column of an Excel file.
-    Skips any header row if the first value does not look like an ID.
-    """
     df = pd.read_excel(excel_file, header=None, dtype=str)
     values = df.iloc[:, 0].dropna().str.strip().tolist()
-    # Drop header-like values: IDs are typically 24-char hex or 36-char UUIDs
     return [v for v in values if len(v) >= 20 and " " not in v]
 
 
+def _empty_log_entry(source_doc_id: str) -> dict:
+    return {
+        "Source Doc ID":      source_doc_id,
+        "Copied":             False,
+        "Target Doc ID":      "—",
+        "External Data Set":  False,
+        "Status":             "failed",
+        "Failed Step":        "—",
+        "Notes":              "",
+    }
+
+
 def _find_doc_by_file_id(target_auth, main_file_id: str):
-    """
-    Query GET /documents?fileId={main_file_id} with up to 6 retries at 20s
-    intervals (20s, 40s, 60s, 80s, 100s, 120s cumulative).
-    Returns the first matching document dict, or None on timeout.
-    """
     for attempt, delay in enumerate(_RETRY_DELAYS_S, 1):
         cumulative = sum(_RETRY_DELAYS_S[:attempt])
         st.write(f"⏳ Attempt {attempt}/6 — waiting {delay}s (cumulative: {cumulative}s)…")
@@ -128,17 +130,8 @@ def _find_doc_by_file_id(target_auth, main_file_id: str):
     return None
 
 
-def _copy_one_document(source_doc_id: str, source_auth, target_auth, target_project_id: str):
-    """
-    Full copy flow for a single document ID:
-      1. Fetch document metadata from source
-      2. Download each file binary from source
-      3. Upload each file to target → collect new fileIds
-      4. Process batch in target project
-      5. Poll for the new document in target
-      6. POST /documents/{newId}/external-data with groundTruthDocumentId
-    Returns a result dict with status and key IDs.
-    """
+def _copy_one_document(source_doc_id: str, source_auth, target_auth, target_project_id: str) -> dict:
+    entry = _empty_log_entry(source_doc_id)
 
     # Step 1 — fetch document metadata
     st.write("📋 Fetching document metadata from source…")
@@ -148,12 +141,11 @@ def _copy_one_document(source_doc_id: str, source_auth, target_auth, target_proj
     )
     if r.status_code != 200:
         st.error(f"Failed to fetch document metadata: HTTP {r.status_code} — {r.text}")
-        return {"status": "failed", "step": "fetch_metadata", "sourceDocId": source_doc_id}
+        entry["Failed Step"] = "fetch_metadata"
+        entry["Notes"] = f"HTTP {r.status_code}"
+        return entry
 
     doc_meta = r.json()
-
-    # Build a deduped file list anchored on the guaranteed top-level fileId.
-    # doc.fileId is always the main file; doc.files[] may add attachments.
     main_file_id = doc_meta.get("fileId")
     files_array = doc_meta.get("files") or []
 
@@ -172,12 +164,14 @@ def _copy_one_document(source_doc_id: str, source_auth, target_auth, target_proj
 
     if not files_to_download:
         st.error("Document has no fileId and no files attached.")
-        return {"status": "failed", "step": "no_files", "sourceDocId": source_doc_id}
+        entry["Failed Step"] = "no_files"
+        entry["Notes"] = "No fileId or files[] found in document response"
+        return entry
 
     st.write(f"Found **{len(files_to_download)}** file(s): "
              + ", ".join(f"`{f['type']}`" for f in files_to_download))
 
-    # Step 2 + 3 — download each file from source via GET /files/{id}, re-upload to target
+    # Step 2 + 3 — download from source, upload to target
     uploaded_file_ids = []
     for f in files_to_download:
         file_id = f["id"]
@@ -190,7 +184,9 @@ def _copy_one_document(source_doc_id: str, source_auth, target_auth, target_proj
         )
         if dl.status_code != 200:
             st.error(f"Failed to download file `{file_id}`: HTTP {dl.status_code}")
-            return {"status": "failed", "step": "download_file", "fileId": file_id}
+            entry["Failed Step"] = "download_file"
+            entry["Notes"] = f"HTTP {dl.status_code} on file {file_id}"
+            return entry
 
         filename = _safe_filename(dl.headers.get("X-Hy-Filename", file_id))
         content_type = dl.headers.get("Content-Type", "application/octet-stream").split(";")[0].strip()
@@ -206,13 +202,15 @@ def _copy_one_document(source_doc_id: str, source_auth, target_auth, target_proj
         )
         if ul.status_code != 201:
             st.error(f"Failed to upload file: HTTP {ul.status_code} — {ul.text}")
-            return {"status": "failed", "step": "upload_file", "filename": filename}
+            entry["Failed Step"] = "upload_file"
+            entry["Notes"] = f"HTTP {ul.status_code} on {filename}"
+            return entry
 
         new_file_id = ul.json().get("id")
         uploaded_file_ids.append(new_file_id)
         st.write(f"  → new fileId: `{new_file_id}`")
 
-    # Step 4 — process batch in target
+    # Step 4 — process batch
     st.write("🔄 Submitting batch to target project…")
     batch = requests.post(
         f"{target_auth.base_url}/cases/process-file-batch",
@@ -221,26 +219,30 @@ def _copy_one_document(source_doc_id: str, source_auth, target_auth, target_proj
     )
     if batch.status_code not in (200, 201, 202):
         st.error(f"Batch processing failed: HTTP {batch.status_code} — {batch.text}")
-        return {"status": "failed", "step": "process_batch", "uploadedFileIds": uploaded_file_ids}
+        entry["Failed Step"] = "process_batch"
+        entry["Notes"] = f"HTTP {batch.status_code}"
+        return entry
+
+    entry["Copied"] = True
     st.write("✅ Batch submitted.")
 
-    # Step 5 — find the new document by the main fileId via GET /documents?fileId=...
-    # uploaded_file_ids[0] is always the main file (anchored on source doc.fileId)
+    # Step 5 — find new document by main fileId
     main_uploaded_file_id = uploaded_file_ids[0]
     st.write(f"🔎 Polling for document with fileId `{main_uploaded_file_id}`…")
     new_doc = _find_doc_by_file_id(target_auth, main_uploaded_file_id)
 
     if new_doc is None:
-        st.warning(
-            "Document not found after 120s. "
-            "Use the **Retry Pending** button below to try again once the document appears."
-        )
+        st.warning("Document not found after 120s. Use the **Retry Pending** button to try again.")
+        entry["Status"] = "partial"
+        entry["Failed Step"] = "poll_timeout"
+        entry["Notes"] = f"Main fileId: {main_uploaded_file_id}"
         pending = st.session_state.get("pending_external_data", [])
         pending.append({"mainFileId": main_uploaded_file_id, "sourceDocId": source_doc_id})
         st.session_state["pending_external_data"] = pending
-        return {"status": "partial", "step": "poll_timeout", "sourceDocId": source_doc_id, "mainFileId": main_uploaded_file_id}
+        return entry
 
     new_doc_id = new_doc["id"]
+    entry["Target Doc ID"] = new_doc_id
     st.write(f"✅ New document found in target: `{new_doc_id}`")
 
     # Step 6 — set groundTruthDocumentId
@@ -252,10 +254,67 @@ def _copy_one_document(source_doc_id: str, source_auth, target_auth, target_proj
     )
     if ext.status_code not in (200, 201, 202):
         st.error(f"Failed to set external data: HTTP {ext.status_code} — {ext.text}")
-        return {"status": "partial", "step": "external_data", "sourceDocId": source_doc_id, "targetDocId": new_doc_id}
+        entry["Status"] = "partial"
+        entry["Failed Step"] = "external_data"
+        entry["Notes"] = f"HTTP {ext.status_code}"
+        return entry
 
+    entry["External Data Set"] = True
+    entry["Status"] = "success"
+    entry["Failed Step"] = "—"
     st.success(f"✅ Copied: `{source_doc_id}` → `{new_doc_id}`")
-    return {"status": "success", "sourceDocId": source_doc_id, "targetDocId": new_doc_id}
+    return entry
+
+
+# ---------------------------------------------------------------------------
+# Log helpers
+# ---------------------------------------------------------------------------
+
+def _update_log_entry(source_doc_id: str, updates: dict):
+    """Find the log entry for source_doc_id and apply updates in place."""
+    log = st.session_state.get("copy_docs_log", [])
+    for entry in log:
+        if entry["Source Doc ID"] == source_doc_id:
+            entry.update(updates)
+            break
+    st.session_state["copy_docs_log"] = log
+
+
+def _render_log():
+    log = st.session_state.get("copy_docs_log", [])
+    if not log:
+        return
+
+    df = pd.DataFrame(log)
+    total            = len(df)
+    copied           = int(df["Copied"].sum())
+    ext_set          = int(df["External Data Set"].sum())
+    both             = int((df["Copied"] & df["External Data Set"]).sum())
+    failed           = int((df["Status"] == "failed").sum())
+    partial          = int((df["Status"] == "partial").sum())
+
+    st.subheader("Run Log")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Total",            total)
+    c2.metric("Copied",           copied)
+    c3.metric("External Data Set", ext_set)
+    c4.metric("Copied + Ext. Data", both)
+    c5.metric("Partial",          partial)
+    c6.metric("Failed",           failed)
+
+    st.dataframe(df, use_container_width=True)
+
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇️ Download Log as CSV",
+        data=csv,
+        file_name="copy_documents_log.csv",
+        mime="text/csv",
+    )
+
+    if st.button("Clear Log"):
+        st.session_state["copy_docs_log"] = []
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -314,9 +373,10 @@ def _copy_documents_section():
                 st.write(f"- `{did}`")
 
     if not doc_ids:
+        _render_log()
         return
 
-    # Retry section — shown whenever there are pending external data patches
+    # Retry pending external data
     pending = st.session_state.get("pending_external_data", [])
     if pending:
         st.warning(f"**{len(pending)}** document(s) are waiting for external data to be set.")
@@ -325,7 +385,6 @@ def _copy_documents_section():
             use_container_width=True,
         )
         if st.button("Retry Pending External Data"):
-            target_auth = st.session_state["target_auth"]
             still_pending = []
             for item in pending:
                 r = requests.get(
@@ -344,6 +403,13 @@ def _copy_documents_section():
                         )
                         if ext.status_code in (200, 201, 202):
                             st.success(f"✅ Patched: `{item['sourceDocId']}` → `{new_doc_id}`")
+                            _update_log_entry(item["sourceDocId"], {
+                                "Target Doc ID":     new_doc_id,
+                                "External Data Set": True,
+                                "Status":            "success",
+                                "Failed Step":       "—",
+                                "Notes":             "Set via retry",
+                            })
                         else:
                             st.error(f"Failed to patch `{item['sourceDocId']}`: HTTP {ext.status_code}")
                             still_pending.append(item)
@@ -359,42 +425,17 @@ def _copy_documents_section():
 
     st.divider()
     if st.button("Copy Documents", type="primary"):
-        results = []
-        success_count = 0
-        fail_count = 0
+        # Initialise log for this run (append to existing session log)
+        if "copy_docs_log" not in st.session_state:
+            st.session_state["copy_docs_log"] = []
 
         for i, doc_id in enumerate(doc_ids, 1):
             st.markdown(f"### Document {i}/{len(doc_ids)}: `{doc_id}`")
-            result = _copy_one_document(
-                doc_id, source_auth, target_auth, target_project[0]
-            )
-            results.append(result)
-            if result["status"] == "success":
-                success_count += 1
-            else:
-                fail_count += 1
+            entry = _copy_one_document(doc_id, source_auth, target_auth, target_project[0])
+            st.session_state["copy_docs_log"].append(entry)
             st.divider()
 
-        st.subheader("Summary")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total", len(results))
-        col2.metric("Succeeded", success_count)
-        col3.metric("Failed / Partial", fail_count)
-
-        if results:
-            st.subheader("Result Details")
-            st.dataframe(
-                [
-                    {
-                        "Source Doc ID": r.get("sourceDocId", "—"),
-                        "Target Doc ID": r.get("targetDocId", "—"),
-                        "Status": r["status"],
-                        "Failed Step": r.get("step", "—"),
-                    }
-                    for r in results
-                ],
-                use_container_width=True,
-            )
+    _render_log()
 
 
 def main():
