@@ -321,8 +321,8 @@ def clone_schema_section():
         )
     with col_tgt:
         target_list = [(p["id"], p["name"]) for p in target_projects]
-        selected_target = st.selectbox(
-            "Target Project",
+        selected_targets = st.multiselect(
+            "Target Project(s)",
             target_list,
             format_func=lambda x: x[1],
             key="clone_schema_target",
@@ -338,8 +338,8 @@ def clone_schema_section():
                 st.json(source_schema)
 
     if st.button("Clone Schema"):
-        if not selected_source or not selected_target:
-            st.error("Please select both source and target projects.")
+        if not selected_source or not selected_targets:
+            st.error("Please select a source project and at least one target project.")
             return
 
         source_schema = source_auth.get_project_schema(selected_source[0])
@@ -348,16 +348,20 @@ def clone_schema_section():
             return
 
         payload = {"schema": source_schema}
-        result = target_auth.update_project(selected_target[0], payload)
-        if result:
-            st.success(
-                f"Schema cloned from '{selected_source[1]}' to '{selected_target[1]}' successfully!"
-            )
-            st.json(result)
-        else:
-            st.error(
-                f"Failed to clone schema to '{selected_target[1]}'."
-            )
+        success_count = 0
+        fail_count = 0
+
+        for target_id, target_name in selected_targets:
+            result = target_auth.update_project(target_id, payload)
+            if result:
+                st.success(f"Schema cloned from '{selected_source[1]}' to '{target_name}' successfully!")
+                success_count += 1
+            else:
+                st.error(f"Failed to clone schema to '{target_name}'.")
+                fail_count += 1
+
+        st.subheader("Summary")
+        st.write(f"**Cloned:** {success_count} | **Failed:** {fail_count}")
 
 
 # --- Clone Schema to Target (by name matching) ---
