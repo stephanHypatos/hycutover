@@ -45,15 +45,21 @@ def _check_admin() -> bool:
 # API helpers
 # ---------------------------------------------------------------------------
 
-def _fetch_documents(auth: HypatosAPI, project_id: str) -> dict | None:
-    r = requests.get(
-        f"{auth.base_url}/documents",
-        headers=auth.get_headers(),
-        params={"projectId": project_id, "limit": 50},
-    )
-    if r.status_code == 200:
-        return r.json()
-    return None
+def _fetch_documents(auth: HypatosAPI, project_id: str) -> tuple[dict | None, int]:
+    try:
+        r = requests.get(
+            f"{auth.base_url}/documents",
+            headers=auth.get_headers(),
+            params={"projectId": project_id, "limit": 50},
+            timeout=30,
+        )
+        if r.status_code == 200:
+            return r.json(), r.status_code
+        return None, r.status_code
+    except requests.Timeout:
+        return None, 504
+    except requests.RequestException:
+        return None, 0
 
 
 def _docs_to_df(data: dict) -> pd.DataFrame:
@@ -63,6 +69,7 @@ def _docs_to_df(data: dict) -> pd.DataFrame:
     return pd.DataFrame([
         {
             "Document ID": d.get("id", ""),
+            "File ID":     d.get("fileId", ""),
             "Title":       d.get("title", ""),
             "State":       d.get("state", ""),
             "Created At":  d.get("createdAt", ""),
@@ -153,27 +160,30 @@ def main():
         pid  = st.session_state.get("poll_project_id", project_id)
 
         with st.spinner(f"Fetching documents for project `{pid}`…"):
-            data = _fetch_documents(auth, pid)
+            data, status_code = _fetch_documents(auth, pid)
 
         now = datetime.now().strftime("%H:%M:%S")
 
         if data is None:
-            st.error("Request failed. Check credentials / project ID.")
+            st.session_state["poll_last_status"] = status_code
+            st.error(f"Request failed (HTTP {status_code}). Check credentials / project ID.")
             st.session_state["polling_active"] = False
         else:
             df = _docs_to_df(data)
             total_count = data.get("totalCount", len(df))
 
-            st.session_state["poll_count"]      = st.session_state.get("poll_count", 0) + 1
-            st.session_state["poll_last_df"]    = df
-            st.session_state["poll_last_time"]  = now
+            st.session_state["poll_count"]       = st.session_state.get("poll_count", 0) + 1
+            st.session_state["poll_last_df"]     = df
+            st.session_state["poll_last_time"]   = now
             st.session_state["poll_total_count"] = total_count
+            st.session_state["poll_last_status"] = status_code
 
         # Status bar
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Poll #",          st.session_state.get("poll_count", 0))
         c2.metric("Last Poll",       st.session_state.get("poll_last_time", "—"))
         c3.metric("Total Documents", st.session_state.get("poll_total_count", 0))
+        c4.metric("HTTP Status",     st.session_state.get("poll_last_status", "—"))
 
         last_df = st.session_state.get("poll_last_df", pd.DataFrame())
         if not last_df.empty:
@@ -191,10 +201,11 @@ def main():
         last_df = st.session_state.get("poll_last_df", pd.DataFrame())
         if not last_df.empty:
             st.subheader("Last Poll Results")
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric("Total Polls",      st.session_state.get("poll_count", 0))
             c2.metric("Last Poll At",     st.session_state.get("poll_last_time", "—"))
             c3.metric("Total Documents",  st.session_state.get("poll_total_count", 0))
+            c4.metric("Last HTTP Status", st.session_state.get("poll_last_status", "—"))
             st.caption(f"Showing {len(last_df)} of {st.session_state.get('poll_total_count', 0)} documents")
             st.dataframe(last_df, use_container_width=True)
 
