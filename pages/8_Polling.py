@@ -63,6 +63,7 @@ def _docs_to_df(data: dict) -> pd.DataFrame:
     return pd.DataFrame([
         {
             "Document ID": d.get("id", ""),
+            "File ID":     d.get("fileId", ""),
             "Title":       d.get("title", ""),
             "State":       d.get("state", ""),
             "Created At":  d.get("createdAt", ""),
