@@ -13,6 +13,7 @@ _MIME_TYPES = {
     "tiff": "image/tiff",
     "tif": "image/tiff",
     "xml": "application/xml",
+    "json": "application/json"
 }
 _ACCEPTED_EXTENSIONS = list(_MIME_TYPES.keys())
 
