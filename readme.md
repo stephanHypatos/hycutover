@@ -1,70 +1,61 @@
-# Project Copy and Compare Streamlit App
+# HyCutOver
 
-### Overview
-This is a Streamlit-based web application that provides functionalities for comparing schemas at a detailed level and copying projects within one or between two companies using API authentication. The app consists of two main functionalities:
+Streamlit multi-page app for managing cutovers between two Hypatos companies
+(or duplicating configuration within one company) via the Hypatos REST API.
 
-1. **Schema Comparison**
-- Authenticates source and target company credentials.
-- Fetches and compares schemas between selected projects.
-- Displays differences in data points and meta-level attributes.
+## Features
 
-2. **Project Copying**
-- Copies projects from a source company to a target company.
-- Allows specifying a new extraction model ID.
-- Supports cloning routing rules of projects.
+- **Compare projects** — data-point and metadata-level schema diffs powered by
+  `DeepDiff`.
+- **Clone projects** — copy projects from a source company to a target
+  company, including routing rules and a configurable extraction model id.
+- **Bulk schema comparison** — compare schemas across many projects via an
+  Excel upload.
+- **Config / schema clone & update** — targeted PATCH updates for a single
+  project's config or schema.
+- **Copy agent workflows** — copy an agent workflow (and every agent it
+  references) between companies, or duplicate one within the same company.
+  Sanitizes OOTB / source-provenance fields and remaps agent references in
+  `workflowConfiguration`.
+- **Compare agents & workflows** — side-by-side diff of two agents' prompt /
+  systemPrompt / outputFormat / configuration, or of two full workflows plus
+  every agent they reference. Purpose-built for spotting prod-vs-test drift.
+- **Copy composite enrichment workflows** — copy composite enrichment
+  workflows between companies.
+- **File batch processing** — upload files and trigger batch processing.
+- **Copy documents** — replay documents from one project into another.
+- **Polling** — inspect long-running operations.
 
-### Features
-- Secure API authentication using `HypatosAPI`.
-- Schema comparison at data point and meta levels using `DeepDiff`.
-- Copy projects with custom parameters.
-- Fetch and copy routing rules.
-- Retrieve extraction model ID from target projects.
+## Prerequisites
 
-### Prerequisites
-1. API v2 credentials of source and target company 
-2. API credentials must include the following scopes: 
+1. API v2 credentials for the source and target companies.
+2. Credential scopes:
+   - `projects.read`, `projects.write`
+   - `routings.read`, `routings.write`
+   - `companies.read`
+   - `agents.read`, `agents.write` (Copy Agent Workflow and Compare
+     Agents & Workflows pages)
 
-- projects.read
-- projects.write
-- routings.read
-- routings.write
-- **[Read more here](https://docs-internal.hypatos.ai/implementation-playbook/introduction-to-implementation-playbook/implementation-playbook/create-or-update-keycloak-credentials)**
+Read more:
+<https://docs-internal.hypatos.ai/implementation-playbook/introduction-to-implementation-playbook/implementation-playbook/create-or-update-keycloak-credentials>
 
-### Usage
-#### Authentication
-- Enter the source and target company credentials.
-- Click "Authenticate Credentials" to verify.
+## Running locally
 
-#### Schema Comparison
-1. Navigate to "Compare Datapoints" or "Compare Metadata".
-2. Select the source project.
-3. Select one or multiple target projects.
-4. Click "Compare" to see the differences.
+```bash
+pip install -r requirements.txt
+streamlit run Home.py
+```
 
-#### Project Copying
-1. Navigate to "Clone Projects".
-2. Select "Copy Projects".
-3. Enter the credentials.
-4. Select projects to copy.
-5. Enter a new extraction model ID.
-6. Click "Create Project Copies".
-7. Once ready you can now copy the routing rules.
+Each page collects the source and target credentials it needs at the top and
+authenticates them via OAuth 2.0 client-credentials flow.
 
+## Tech stack
 
-#### Copy Routing Rules
-1. Navigate to "Copy Routing Rules".
-2. Click "Copy Routing Rules" to transfer routing rules between projects.
+- Python + Streamlit (multi-page app)
+- `requests` for HTTP
+- `pandas` + `openpyxl` for Excel handling
+- `DeepDiff` for schema comparison
 
-#### Get Model ID
-1. Navigate to "Get Model ID".
-2. Select a project to retrieve its extraction model ID.
+## Contact
 
-### Technologies Used
-- **Python**
-- **Streamlit**
-- **Pandas**
-- **DeepDiff**
-- **Requests**
-
-### Contact
-For any issues or feature requests, open an issue on the GitHub repository.
+Open an issue on the GitHub repository for bug reports or feature requests.
