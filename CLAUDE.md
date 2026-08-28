@@ -26,6 +26,8 @@ pages/
   4_Copy_Agent_Workflow.py          # Copy an agent workflow (and referenced agents) between
                                     # companies, or duplicate within one company, using
                                     # /agents and /agent-workflows
+  9_Compare_Agents.py               # Side-by-side diff of two agents' prompt / systemPrompt /
+                                    # outputFormat / configuration (fetched via /agents/{id})
 requirements.txt
 ```
 
