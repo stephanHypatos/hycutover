@@ -13,8 +13,6 @@ st.caption(
     "companies via the Agent Management REST API — or duplicates one within the same company."
 )
 
-if not check_admin_access():
-    st.stop()
 
 # Provenance / server-managed fields that must be stripped before POST.
 AGENT_STRIP = {
