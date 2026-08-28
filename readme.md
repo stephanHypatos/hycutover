@@ -20,6 +20,9 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
 - **Compare agents & workflows** — side-by-side diff of two agents' prompt /
   systemPrompt / outputFormat / configuration, or of two full workflows plus
   every agent they reference. Purpose-built for spotting prod-vs-test drift.
+- **Manage project users** — inspect who has access to which projects, build
+  ad-hoc user groups and assign (or remove) them across many projects in one
+  go, resolving names / email addresses to user ids automatically.
 - **Copy composite enrichment workflows** — copy composite enrichment
   workflows between companies.
 - **File batch processing** — upload files and trigger batch processing.
@@ -35,6 +38,7 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
    - `companies.read`
    - `agents.read`, `agents.write` (Copy Agent Workflow and Compare
      Agents & Workflows pages)
+   - `users.read` (Manage Project Users page)
 
 Read more:
 <https://docs-internal.hypatos.ai/implementation-playbook/introduction-to-implementation-playbook/implementation-playbook/create-or-update-keycloak-credentials>

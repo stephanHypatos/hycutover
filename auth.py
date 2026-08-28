@@ -242,12 +242,84 @@ class HypatosAPI:
         try:
             response = requests.patch(url, json=payload, headers=headers)
             response.raise_for_status()
+            self.last_error = None
             return response.json()
         except requests.HTTPError as http_err:
-            print(f"HTTP error while updating project {project_id}: {http_err}")
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while updating project {project_id}: {self.last_error}")
         except Exception as err:
+            self.last_error = str(err)
             print(f"Unexpected error while updating project {project_id}: {err}")
         return None
+
+    # ------------------------------------------------------------------
+    # Users (/users)
+    # ------------------------------------------------------------------
+
+    def list_users(self, search: str = None, active: bool = None, roles: list = None) -> list:
+        """
+        GET /users — paginated. Returns all users visible to the credentials,
+        each with id, email, name, companiesAccess and isInternal.
+        """
+        url = f"{self.base_url}/users"
+        headers = self.get_headers()
+        limit = 50
+        offset = 0
+        results = []
+        try:
+            while True:
+                params = {"limit": limit, "offset": offset}
+                if search:
+                    params["search"] = search
+                if active is not None:
+                    params["active"] = str(active).lower()
+                if roles:
+                    params["roles"] = roles
+                response = requests.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                body = response.json()
+                batch = body.get("data", []) if isinstance(body, dict) else []
+                results.extend(batch)
+                total = body.get("totalCount", len(results))
+                if len(results) >= total or not batch:
+                    break
+                offset += limit
+            self.last_error = None
+            return results
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while listing users: {self.last_error}")
+        except Exception as err:
+            self.last_error = str(err)
+            print(f"Unexpected error while listing users: {err}")
+        return []
+
+    def get_user(self, user_id: str) -> dict:
+        """GET /users/{id} — a single user (id, email, name, companiesAccess)."""
+        url = f"{self.base_url}/users/{user_id}"
+        headers = self.get_headers()
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            self.last_error = None
+            return response.json()
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while fetching user {user_id}: {self.last_error}")
+        except Exception as err:
+            self.last_error = str(err)
+            print(f"Unexpected error while fetching user {user_id}: {err}")
+        return None
+
+    def update_project_members(self, project_id: str, members: dict) -> dict:
+        """
+        Updates only the project member access via PATCH /projects/{id}.
+
+        `members` is the discriminated union from the API:
+          {"allow": "all"} — every company user has access
+          {"allow": "members", "members": [<userId>, ...]} — explicit list
+        """
+        return self.update_project(project_id, {"members": members})
 
     def create_routing_rule(self, rule_payload):
         """
