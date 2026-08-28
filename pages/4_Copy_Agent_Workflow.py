@@ -3,7 +3,6 @@ import json
 import streamlit as st
 import pandas as pd
 from auth import HypatosAPI
-from helpers import check_admin_access
 from config import BASE_URL_EU, BASE_URL_US
 
 st.set_page_config(page_title="Copy Agent Workflow", layout="wide")
