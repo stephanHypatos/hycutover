@@ -202,10 +202,17 @@ def _post_agent(agent_body: dict, override_name: str = None, override_version: s
     return created, (tgt_api.last_error if created is None else None), payload
 
 
-def _post_workflow(workflow_body: dict, override_name: str = None):
+def _post_workflow(workflow_body: dict, override_name: str = None, drop_projects: bool = False):
     payload = _sanitize(workflow_body, WORKFLOW_STRIP)
     if override_name is not None:
         payload["name"] = override_name
+    if drop_projects:
+        # Cross-company: source-company project ids do not exist in the target.
+        # `projects` is a required field, so send an empty string to satisfy the
+        # schema without binding the workflow to any projects; user assigns later.
+        payload["projects"] = ""
+        payload.pop("trainingProjects", None)
+        payload.pop("trainingCompanyId", None)
     created = tgt_api.create_agent_workflow(payload)
     return created, (tgt_api.last_error if created is None else None), payload
 
@@ -259,10 +266,35 @@ if mode.startswith("Agent Workflow"):
     with st.expander("Source workflow detail"):
         st.json(wf_detail)
 
-    # Identify agents referenced by the workflow configuration
-    referenced_uuids = _find_uuids(wf_detail.get("workflowConfiguration") or {})
+    # Identify agents referenced by the workflow configuration.
+    # Workflow configs may point at agents either by UUID (id) or by "name:version"
+    # string, so we scan for both and merge.
+    wf_config = wf_detail.get("workflowConfiguration") or {}
+    referenced_uuids = _find_uuids(wf_config)
     src_by_id = {a.get("id"): a for a in src_agents if a.get("id")}
-    referenced_src_agents = [src_by_id[u] for u in referenced_uuids if u in src_by_id]
+    by_uuid = [src_by_id[u] for u in referenced_uuids if u in src_by_id]
+
+    config_str = json.dumps(wf_config)
+    by_name = []
+    seen_ids = {a.get("id") for a in by_uuid}
+    for a in src_agents:
+        aid = a.get("id")
+        if aid in seen_ids:
+            continue
+        name = (a.get("name") or "").strip()
+        version = (a.get("version") or "").strip()
+        if not name:
+            continue
+        # Prefer name:version, then bare quoted name as a fallback.
+        needles = []
+        if version:
+            needles.append(f"{name}:{version}")
+        needles.append(f'"{name}"')
+        if any(n in config_str for n in needles):
+            by_name.append(a)
+            seen_ids.add(aid)
+
+    referenced_src_agents = by_uuid + by_name
 
     st.subheader("2b. Agents referenced by this workflow")
     if not referenced_src_agents and referenced_uuids:
@@ -305,6 +337,13 @@ if mode.startswith("Agent Workflow"):
             st.markdown(f"**{len(copy_choices)}** agent(s) need to be created in the target.")
         else:
             st.markdown("All referenced agents already exist in the target — only the workflow will be copied.")
+
+    if not same_company:
+        st.info(
+            "Cross-company copy: the workflow will be created without any project "
+            "assignment (source project ids do not exist in the target). Bind it to "
+            "the desired target projects afterwards."
+        )
 
     st.subheader("2c. Target workflow name")
     default_wf_name = wf_detail.get("name", "")
@@ -367,11 +406,13 @@ if mode.startswith("Agent Workflow"):
                 wf_payload_body.get("workflowConfiguration") or {}, agent_id_map
             )
         # projects and trainingProjects reference the source company projects — the target
-        # company almost certainly has different project ids. Warn the user, don't hard-fail.
+        # company almost certainly has different project ids, so strip them on cross-company
+        # copies (user can bind projects to the workflow manually afterwards).
         with st.spinner("Copying workflow…"):
             created_wf, err_wf, wf_payload = _post_workflow(
                 wf_payload_body,
                 override_name=new_wf_name.strip() or None,
+                drop_projects=not same_company,
             )
         if created_wf:
             results.append({
