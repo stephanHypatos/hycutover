@@ -5,7 +5,8 @@
 HyCutOver is a Streamlit multi-page web application for managing Hypatos
 cutover operations: schema comparison, project cloning, config/schema updates,
 agent workflow copy, agent/workflow drift comparison, composite enrichment
-workflow copy, file batch processing, document copy, and polling.
+workflow copy, file batch processing, document copy, polling, and bulk
+project-user management.
 
 ## Tech Stack
 
@@ -37,6 +38,9 @@ pages/
   9_Compare_Agents_and_Workflows.py      # Side-by-side diff of two agents, OR two workflows plus
                                          # every agent they reference (prod-vs-test drift check).
                                          # Uses /agents/{id} and /agent-workflows/{id}.
+  10_Manage_Project_Users.py             # Inspect and bulk-edit project member access for one
+                                         # company. Session-local "user groups" are resolved to
+                                         # user ids. Uses /users and PATCH /projects/{id}.
 requirements.txt
 ```
 
@@ -46,7 +50,7 @@ requirements.txt
 - Auth: OAuth 2.0 Client Credentials Grant via `POST /auth/token`
 - Key endpoints: `/projects`, `/projects/{id}`, `/projects/{id}/schema`,
   `/routings`, `/agents`, `/agents/{id}`, `/agent-workflows`,
-  `/agent-workflows/{id}`
+  `/agent-workflows/{id}`, `/users`, `/users/{id}`
 - All REST API methods live in `auth.py` → `HypatosAPI` class
 - `setup_api.py` → `SetupAPI` covers the cookie-authenticated
   `setup.cloud.hypatos.ai` API used by the composite enrichment page
@@ -74,6 +78,14 @@ streamlit run Home.py
 - `workflowConfiguration` references agents by UUID and by
   `name:version` string; the copy and compare pages scan for both when
   resolving referenced agents.
+- Project member access is the discriminated union
+  `{"allow": "all"}` or `{"allow": "members", "members": [<userId>, ...]}`.
+  `update_project_members()` PATCHes only that field. Switching a project
+  from `all` to an explicit list *restricts* access, so the Manage Project
+  Users page requires a confirmation for that case.
+- There is no group concept in the API. Groups on the Manage Project Users
+  page live in `st.session_state` (`mpu_groups`) and are resolved to user ids
+  at assignment time; they can be exported / imported as JSON.
 
 ## Required API Scopes
 
@@ -81,3 +93,4 @@ streamlit run Home.py
 - `routings.read`, `routings.write`
 - `companies.read`
 - `agents.read`, `agents.write` (Copy Agent Workflow, Compare Agents & Workflows)
+- `users.read` (Manage Project Users)
