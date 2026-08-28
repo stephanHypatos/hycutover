@@ -1,325 +1,537 @@
 import re
+import json
 import streamlit as st
 import pandas as pd
 from auth import HypatosAPI
-from setup_api import SetupAPI
 from helpers import check_admin_access
 from config import BASE_URL_EU, BASE_URL_US
 
 st.set_page_config(page_title="Copy Agent Workflow", layout="wide")
 st.title("Copy Agent Workflow")
+st.caption(
+    "Copies an agent workflow (and optionally the agents it references) between "
+    "companies via the Agent Management REST API — or duplicates one within the same company."
+)
 
 if not check_admin_access():
     st.stop()
 
-SETUP_URL = "https://setup.cloud.hypatos.ai"
+# Provenance / server-managed fields that must be stripped before POST.
+AGENT_STRIP = {
+    "id", "rootAgentId", "companyId",
+    "createdAt", "createdBy", "updatedAt", "updatedBy",
+    "versions", "versionsMetadata",
+    "isOotb", "sourceTemplateAgentId", "sourceTemplateAgentVersion",
+}
+WORKFLOW_STRIP = {
+    "id", "companyId",
+    "createdAt", "createdBy", "updatedAt", "updatedBy",
+    "version",
+    "isOotb", "sourceWorkflowId", "sourceWorkflowVersion",
+}
+
+UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def _sanitize(obj: dict, strip_keys: set) -> dict:
+    return {k: v for k, v in obj.items() if k not in strip_keys}
+
+
+def _find_uuids(node) -> set:
+    """Recursively collect UUID-looking strings anywhere in a nested structure."""
+    found = set()
+    if isinstance(node, dict):
+        for v in node.values():
+            found |= _find_uuids(v)
+    elif isinstance(node, list):
+        for v in node:
+            found |= _find_uuids(v)
+    elif isinstance(node, str):
+        for m in UUID_RE.findall(node):
+            found.add(m)
+    return found
+
+
+def _rewrite_uuids(node, mapping: dict):
+    """Return a deep copy with any UUID string in `mapping` swapped for its replacement."""
+    if isinstance(node, dict):
+        return {k: _rewrite_uuids(v, mapping) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_rewrite_uuids(v, mapping) for v in node]
+    if isinstance(node, str) and node in mapping:
+        return mapping[node]
+    if isinstance(node, str):
+        # also handle substrings — replace each occurrence
+        out = node
+        for src, dst in mapping.items():
+            if src in out:
+                out = out.replace(src, dst)
+        return out
+    return node
+
+
+def _reset(prefix: str):
+    for key in list(st.session_state.keys()):
+        if key.startswith(prefix):
+            st.session_state.pop(key, None)
+
 
 # ---------------------------------------------------------------------------
-# Step 1 – Source company credentials
+# Step 1 — Credentials
 # ---------------------------------------------------------------------------
-st.header("Step 1: Source Company Credentials")
+st.header("Step 1: Credentials")
 
-if "caw_source_company" not in st.session_state:
-    env = st.selectbox("Environment", [BASE_URL_EU, BASE_URL_US], key="caw_source_env")
+col1, col2 = st.columns([5, 1])
+with col2:
+    if st.button("Reset", key="caw_reset_all"):
+        _reset("caw_")
+        st.rerun()
+
+st.markdown(
+    "The Agent Management API uses standard OAuth2 client credentials. "
+    "Enter the source company credentials, and either identical credentials for the target "
+    "or check *Same as source* to duplicate within one company."
+)
+
+col_src, col_tgt = st.columns(2)
+with col_src:
+    st.subheader("Source Company")
+    src_env = st.selectbox(
+        "Region",
+        (BASE_URL_EU, BASE_URL_US),
+        key="caw_src_env",
+        format_func=lambda u: "EU" if u == BASE_URL_EU else "US",
+    )
     src_id = st.text_input("Source client_id", key="caw_src_id")
     src_secret = st.text_input("Source client_secret", type="password", key="caw_src_secret")
 
-    if st.button("Authenticate Source", key="caw_auth_source"):
-        if src_id.strip() and src_secret.strip():
-            api = HypatosAPI(src_id.strip(), src_secret.strip(), env)
-            if api.authenticate():
-                company = api.get_company()
-                if company:
-                    st.session_state["caw_source_auth"] = api
-                    st.session_state["caw_source_company"] = company
-                    st.rerun()
-                else:
-                    st.error(f"Authenticated but could not fetch company. {api.last_error or ''}")
-            else:
-                st.error(f"Authentication failed. {api.last_error or ''}")
-        else:
-            st.error("Please fill in both client_id and client_secret.")
-    st.stop()
-
-src = st.session_state["caw_source_company"]
-st.success(f"Source: **{src.get('name', src.get('id', 'Unknown'))}** (ID: `{src.get('id', '?')}`)")
-
-# ---------------------------------------------------------------------------
-# Step 2 – Target company credentials
-# ---------------------------------------------------------------------------
-st.header("Step 2: Target Company Credentials")
-
-if "caw_target_company" not in st.session_state:
-    env2 = st.selectbox("Environment", [BASE_URL_EU, BASE_URL_US], key="caw_target_env")
-    tgt_id = st.text_input("Target client_id", key="caw_tgt_id")
-    tgt_secret = st.text_input("Target client_secret", type="password", key="caw_tgt_secret")
-
-    if st.button("Authenticate Target", key="caw_auth_target"):
-        if tgt_id.strip() and tgt_secret.strip():
-            api = HypatosAPI(tgt_id.strip(), tgt_secret.strip(), env2)
-            if api.authenticate():
-                company = api.get_company()
-                if company:
-                    st.session_state["caw_target_auth"] = api
-                    st.session_state["caw_target_company"] = company
-                    st.rerun()
-                else:
-                    st.error(f"Authenticated but could not fetch company. {api.last_error or ''}")
-            else:
-                st.error(f"Authentication failed. {api.last_error or ''}")
-        else:
-            st.error("Please fill in both client_id and client_secret.")
-    st.stop()
-
-tgt = st.session_state["caw_target_company"]
-st.success(f"Target: **{tgt.get('name', tgt.get('id', 'Unknown'))}** (ID: `{tgt.get('id', '?')}`)")
-
-# ---------------------------------------------------------------------------
-# Step 3 – Setup access token
-# ---------------------------------------------------------------------------
-st.header("Step 3: Setup Access Token")
-
-if "caw_setup_token" not in st.session_state:
-    st.info(
-        "Paste your `access_token` cookie from an active "
-        f"[{SETUP_URL}]({SETUP_URL}) browser session."
+with col_tgt:
+    st.subheader("Target Company")
+    same_company = st.checkbox(
+        "Same as source (copy within one company)",
+        key="caw_same_company",
     )
-    with st.expander("How to get your access_token", expanded=True):
-        st.markdown(
-            f"""
-1. Open **[{SETUP_URL}]({SETUP_URL})** in your browser and log in.
-2. Open **DevTools** (`F12` or right-click → *Inspect*).
-3. Go to **Application** → **Cookies** → `{SETUP_URL}`.
-4. Find the cookie named **`access_token`** and copy its value.
-5. Paste it into the field below.
-"""
+    if same_company:
+        st.info("Target will reuse the source credentials.")
+        tgt_env = src_env
+        tgt_id = src_id
+        tgt_secret = src_secret
+    else:
+        tgt_env = st.selectbox(
+            "Region",
+            (BASE_URL_EU, BASE_URL_US),
+            key="caw_tgt_env",
+            format_func=lambda u: "EU" if u == BASE_URL_EU else "US",
+        )
+        tgt_id = st.text_input("Target client_id", key="caw_tgt_id")
+        tgt_secret = st.text_input("Target client_secret", type="password", key="caw_tgt_secret")
+
+if not st.session_state.get("caw_authed"):
+    if st.button("Authenticate", key="caw_do_auth"):
+        if not (src_id and src_secret and tgt_id and tgt_secret):
+            st.error("Please fill in both client_id and client_secret for source and target.")
+        else:
+            src_api = HypatosAPI(src_id.strip(), src_secret.strip(), src_env)
+            if not src_api.authenticate():
+                st.error(f"Source authentication failed. {src_api.last_error or ''}")
+                st.stop()
+            src_company = src_api.get_company()
+            if not src_company:
+                st.error(f"Source authenticated but could not fetch company. {src_api.last_error or ''}")
+                st.stop()
+
+            if same_company:
+                tgt_api = src_api
+                tgt_company = src_company
+            else:
+                tgt_api = HypatosAPI(tgt_id.strip(), tgt_secret.strip(), tgt_env)
+                if not tgt_api.authenticate():
+                    st.error(f"Target authentication failed. {tgt_api.last_error or ''}")
+                    st.stop()
+                tgt_company = tgt_api.get_company()
+                if not tgt_company:
+                    st.error(f"Target authenticated but could not fetch company. {tgt_api.last_error or ''}")
+                    st.stop()
+
+            st.session_state["caw_source_auth"] = src_api
+            st.session_state["caw_source_company"] = src_company
+            st.session_state["caw_target_auth"] = tgt_api
+            st.session_state["caw_target_company"] = tgt_company
+            st.session_state["caw_authed"] = True
+            st.rerun()
+    st.stop()
+
+src_company = st.session_state["caw_source_company"]
+tgt_company = st.session_state["caw_target_company"]
+src_api: HypatosAPI = st.session_state["caw_source_auth"]
+tgt_api: HypatosAPI = st.session_state["caw_target_auth"]
+same_company = src_company.get("id") == tgt_company.get("id")
+
+st.success(
+    f"Source: **{src_company.get('name', '?')}** (`{src_company.get('id', '?')}`) → "
+    f"Target: **{tgt_company.get('name', '?')}** (`{tgt_company.get('id', '?')}`)"
+    + ("  ·  *same-company copy*" if same_company else "")
+)
+
+# ---------------------------------------------------------------------------
+# Step 2 — Choose what to copy
+# ---------------------------------------------------------------------------
+st.header("Step 2: What do you want to copy?")
+
+mode = st.radio(
+    "Copy mode",
+    ["Agent Workflow (with referenced agents)", "Agents only"],
+    key="caw_mode",
+    horizontal=True,
+)
+
+target_company_id = tgt_company.get("id")
+
+
+def _post_agent(agent_body: dict, override_name: str = None, override_version: str = None):
+    """Sanitize + POST an agent to the target company. Returns (created_agent, error_str)."""
+    payload = _sanitize(agent_body, AGENT_STRIP)
+    if override_name is not None:
+        payload["name"] = override_name
+    if override_version is not None:
+        payload["version"] = override_version
+    # Ensure required-null-ok fields survive as-is; drop obviously empty version to let API assign one
+    if not payload.get("version"):
+        payload.pop("version", None)
+    created = tgt_api.create_agent(payload)
+    return created, (tgt_api.last_error if created is None else None), payload
+
+
+def _post_workflow(workflow_body: dict, override_name: str = None):
+    payload = _sanitize(workflow_body, WORKFLOW_STRIP)
+    if override_name is not None:
+        payload["name"] = override_name
+    created = tgt_api.create_agent_workflow(payload)
+    return created, (tgt_api.last_error if created is None else None), payload
+
+
+# ---------------------------------------------------------------------------
+# Mode A — Agent Workflow copy
+# ---------------------------------------------------------------------------
+if mode.startswith("Agent Workflow"):
+    st.subheader("2a. Select source workflow")
+
+    if "caw_workflows" not in st.session_state:
+        if st.button("Load source workflows", key="caw_load_workflows"):
+            with st.spinner("Fetching agent workflows…"):
+                wfs = src_api.list_agent_workflows()
+            if not wfs:
+                st.error(f"No workflows found or fetch failed. {src_api.last_error or ''}")
+                st.stop()
+            st.session_state["caw_workflows"] = wfs
+            st.rerun()
+        st.stop()
+
+    workflows = st.session_state["caw_workflows"]
+    wf_labels = {
+        f"{w.get('name', 'Unnamed')} · v{w.get('version', '?')} "
+        f"({w.get('id', '?')[:8]}…)": w
+        for w in workflows if w.get("id")
+    }
+    selected_label = st.selectbox("Workflow", list(wf_labels.keys()), key="caw_wf_sel")
+    selected_wf = wf_labels[selected_label]
+
+    if st.button("Load workflow detail", key="caw_load_wf_detail"):
+        with st.spinner("Fetching workflow detail…"):
+            detail = src_api.get_agent_workflow(selected_wf["id"])
+        if detail is None:
+            st.error(f"Failed to load workflow. {src_api.last_error or ''}")
+            st.stop()
+        st.session_state["caw_wf_detail"] = detail
+        # Also refresh source + target agent lists at the same time
+        with st.spinner("Fetching source & target agents…"):
+            st.session_state["caw_src_agents"] = src_api.list_agents()
+            st.session_state["caw_tgt_agents"] = tgt_api.list_agents() if not same_company else st.session_state["caw_src_agents"]
+        st.rerun()
+
+    if "caw_wf_detail" not in st.session_state:
+        st.stop()
+
+    wf_detail = st.session_state["caw_wf_detail"]
+    src_agents = st.session_state.get("caw_src_agents", [])
+    tgt_agents = st.session_state.get("caw_tgt_agents", [])
+
+    with st.expander("Source workflow detail"):
+        st.json(wf_detail)
+
+    # Identify agents referenced by the workflow configuration
+    referenced_uuids = _find_uuids(wf_detail.get("workflowConfiguration") or {})
+    src_by_id = {a.get("id"): a for a in src_agents if a.get("id")}
+    referenced_src_agents = [src_by_id[u] for u in referenced_uuids if u in src_by_id]
+
+    st.subheader("2b. Agents referenced by this workflow")
+    if not referenced_src_agents and referenced_uuids:
+        st.warning(
+            f"Found {len(referenced_uuids)} UUID(s) inside the workflow configuration but none "
+            "match an agent in the source company. This is fine if the workflow only references "
+            "OOTB or shared agents — nothing will be copied on the agent side."
+        )
+    elif not referenced_uuids:
+        st.info("No agent UUIDs detected in workflowConfiguration. Only the workflow will be copied.")
+
+    tgt_key = {(a.get("name"), a.get("version")): a for a in tgt_agents}
+
+    rows = []
+    for a in referenced_src_agents:
+        key = (a.get("name"), a.get("version"))
+        rows.append({
+            "name": a.get("name"),
+            "version": a.get("version"),
+            "type": a.get("type"),
+            "source_id": a.get("id"),
+            "in_target": key in tgt_key,
+            "target_id": tgt_key.get(key, {}).get("id") if key in tgt_key else None,
+        })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    if same_company:
+        st.info(
+            "Same-company copy: referenced agents are reused as-is — only the workflow is duplicated. "
+            "You must give the new workflow a distinct name."
+        )
+        copy_choices = []
+    else:
+        copy_choices = [
+            r for r in rows
+            if not r["in_target"]
+        ]
+        if copy_choices:
+            st.markdown(f"**{len(copy_choices)}** agent(s) need to be created in the target.")
+        else:
+            st.markdown("All referenced agents already exist in the target — only the workflow will be copied.")
+
+    st.subheader("2c. Target workflow name")
+    default_wf_name = wf_detail.get("name", "")
+    if same_company:
+        default_wf_name = f"{default_wf_name} (copy)" if default_wf_name else "workflow (copy)"
+    new_wf_name = st.text_input(
+        "New workflow name",
+        value=default_wf_name,
+        key="caw_new_wf_name",
+    )
+
+    if same_company and new_wf_name.strip() == (wf_detail.get("name") or "").strip():
+        st.warning("Please pick a name different from the source workflow when copying within the same company.")
+
+    if st.button("Execute copy", key="caw_do_copy_wf", type="primary"):
+        results = []
+        agent_id_map = {}  # source agent id -> target agent id
+
+        # Step 1 — copy missing referenced agents (cross-company only)
+        if not same_company and copy_choices:
+            progress = st.progress(0.0, text="Copying agents…")
+            for i, r in enumerate(copy_choices):
+                sid = r["source_id"]
+                full = src_api.get_agent(sid)
+                if not full:
+                    results.append({
+                        "kind": "agent", "name": r["name"], "version": r["version"],
+                        "status": f"FAILED (fetch): {src_api.last_error or ''}",
+                        "payload": None, "response": None,
+                    })
+                    progress.progress((i + 1) / len(copy_choices))
+                    continue
+                created, err, payload = _post_agent(full)
+                if created:
+                    agent_id_map[sid] = created.get("id")
+                    results.append({
+                        "kind": "agent", "name": r["name"], "version": r["version"],
+                        "status": "OK",
+                        "payload": payload, "response": created,
+                    })
+                else:
+                    results.append({
+                        "kind": "agent", "name": r["name"], "version": r["version"],
+                        "status": f"FAILED (create): {err or ''}",
+                        "payload": payload, "response": None,
+                    })
+                progress.progress((i + 1) / len(copy_choices))
+
+        # Also carry over agents that already exist in target (name+version) so the workflow
+        # config can be rewritten to point at target ids.
+        if not same_company:
+            for r in rows:
+                if r["in_target"] and r["target_id"] and r["source_id"]:
+                    agent_id_map[r["source_id"]] = r["target_id"]
+
+        # Step 2 — copy the workflow
+        wf_payload_body = dict(wf_detail)
+        if agent_id_map:
+            wf_payload_body["workflowConfiguration"] = _rewrite_uuids(
+                wf_payload_body.get("workflowConfiguration") or {}, agent_id_map
+            )
+        # projects and trainingProjects reference the source company projects — the target
+        # company almost certainly has different project ids. Warn the user, don't hard-fail.
+        with st.spinner("Copying workflow…"):
+            created_wf, err_wf, wf_payload = _post_workflow(
+                wf_payload_body,
+                override_name=new_wf_name.strip() or None,
+            )
+        if created_wf:
+            results.append({
+                "kind": "workflow", "name": wf_payload.get("name"), "version": "-",
+                "status": "OK",
+                "payload": wf_payload, "response": created_wf,
+            })
+        else:
+            results.append({
+                "kind": "workflow", "name": wf_payload.get("name"), "version": "-",
+                "status": f"FAILED: {err_wf or ''}",
+                "payload": wf_payload, "response": None,
+            })
+
+        st.session_state["caw_wf_results"] = results
+        st.rerun()
+
+    results = st.session_state.get("caw_wf_results")
+    if results:
+        st.subheader("Result")
+        failed = [r for r in results if not r["status"].startswith("OK")]
+        (st.warning if failed else st.success)(
+            f"Completed with {len(failed)} failure(s) / {len(results) - len(failed)} success(es)."
+        )
+        for r in results:
+            icon = "✅" if r["status"] == "OK" else "❌"
+            with st.expander(
+                f"{icon} [{r['kind']}] {r['name']} — {r['status']}",
+                expanded=r["status"] != "OK",
+            ):
+                if r["payload"] is not None:
+                    st.write("**Payload sent:**")
+                    st.json(r["payload"])
+                if r["response"] is not None:
+                    st.write("**API response:**")
+                    st.json(r["response"])
+
+# ---------------------------------------------------------------------------
+# Mode B — Agents-only copy
+# ---------------------------------------------------------------------------
+else:
+    st.subheader("2a. Select source agents")
+
+    if "caw_src_agents_only" not in st.session_state:
+        if st.button("Load source agents", key="caw_load_src_agents"):
+            with st.spinner("Fetching agents…"):
+                src_agents = src_api.list_agents()
+                tgt_agents = (
+                    src_agents if same_company else tgt_api.list_agents()
+                )
+            if not src_agents:
+                st.error(f"No agents found or fetch failed. {src_api.last_error or ''}")
+                st.stop()
+            st.session_state["caw_src_agents_only"] = src_agents
+            st.session_state["caw_tgt_agents_only"] = tgt_agents
+            st.rerun()
+        st.stop()
+
+    src_agents = st.session_state["caw_src_agents_only"]
+    tgt_agents = st.session_state["caw_tgt_agents_only"]
+    tgt_key = {(a.get("name"), a.get("version")): a for a in tgt_agents}
+
+    df_rows = []
+    for a in src_agents:
+        key = (a.get("name"), a.get("version"))
+        df_rows.append({
+            "name": a.get("name"),
+            "version": a.get("version"),
+            "type": a.get("type"),
+            "isOotb": a.get("isOotb"),
+            "in_target": key in tgt_key,
+            "source_id": a.get("id"),
+        })
+    df = pd.DataFrame(df_rows)
+
+    with st.expander("All source agents", expanded=False):
+        st.dataframe(df, width="stretch", hide_index=True)
+
+    labels = {
+        f"{r['name']} · v{r['version']} "
+        f"{'· already in target' if r['in_target'] else ''}": r["source_id"]
+        for r in df_rows
+    }
+    default = [
+        lbl for lbl, sid in labels.items()
+        if not next((r for r in df_rows if r["source_id"] == sid), {}).get("in_target")
+        and not next((r for r in df_rows if r["source_id"] == sid), {}).get("isOotb")
+    ]
+    picked = st.multiselect(
+        "Agents to copy",
+        list(labels.keys()),
+        default=default if not same_company else [],
+        key="caw_agent_pick",
+    )
+    picked_ids = [labels[p] for p in picked]
+
+    st.subheader("2b. Naming")
+    suffix = ""
+    if same_company:
+        suffix = st.text_input(
+            "Name suffix (required for same-company copy)",
+            value=" (copy)",
+            key="caw_agent_suffix",
+            help="Appended to the name of every copied agent to avoid collisions.",
         )
 
-    token_input = st.text_input(
-        "access_token",
-        type="password",
-        placeholder="Paste your access_token here",
-        key="caw_token_input",
-    )
-
-    if st.button("Verify token", key="caw_verify_token"):
-        if token_input.strip():
-            setup_api = SetupAPI(token_input.strip())
-            source_company_id = st.session_state["caw_source_company"].get("id")
-            with st.spinner("Verifying token against source company prompting settings…"):
-                result = setup_api.get_prompting_settings(source_company_id)
-            if result is not None:
-                st.session_state["caw_setup_token"] = token_input.strip()
-                st.rerun()
-            else:
-                st.error(f"Token verification failed. {setup_api.last_error or 'No data returned.'}")
+    if st.button("Execute copy", key="caw_do_copy_agents", type="primary"):
+        results = []
+        if not picked_ids:
+            st.info("No agents selected.")
         else:
-            st.error("Please paste a valid token before verifying.")
-    st.stop()
-
-col1, col2 = st.columns([5, 1])
-with col1:
-    st.success("Setup access token verified.")
-with col2:
-    if st.button("Reset", key="caw_reset"):
-        for key in [
-            "caw_source_auth", "caw_source_company",
-            "caw_target_auth", "caw_target_company",
-            "caw_setup_token",
-            "caw_workflows", "caw_wf_detail",
-            "caw_copy_done", "caw_agents_done", "caw_update_results",
-        ]:
-            st.session_state.pop(key, None)
-        st.rerun()
-
-# ---------------------------------------------------------------------------
-# Step 4 – Copy agent workflow
-# ---------------------------------------------------------------------------
-st.header("Step 4: Copy Agent Workflow")
-
-setup_api = SetupAPI(st.session_state["caw_setup_token"])
-source_company_id = st.session_state["caw_source_company"].get("id")
-target_company_id = st.session_state["caw_target_company"].get("id")
-
-# ── 4a: Load & select workflow ──────────────────────────────────────────────
-st.subheader("4a. Select Prompting-Settings Workflow")
-
-if "caw_workflows" not in st.session_state:
-    if st.button("Load Source Workflows", key="caw_load_wf"):
-        with st.spinner("Fetching agentic workflows…"):
-            data = setup_api.get_prompting_settings(source_company_id)
-        if data is None:
-            st.error(f"Failed to load workflows. {setup_api.last_error or ''}")
-        else:
-            wfs = data if isinstance(data, list) else data.get("data", [])
-            st.session_state["caw_workflows"] = [w for w in wfs if w.get("id")]
-            st.rerun()
-    st.stop()
-
-workflows = st.session_state["caw_workflows"]
-if not workflows:
-    st.warning("No workflows found for the source company.")
-    if st.button("Reload Workflows", key="caw_reload_wf"):
-        st.session_state.pop("caw_workflows", None)
-        st.rerun()
-    st.stop()
-
-wf_map = {f"{w.get('name', 'Unnamed')} ({w['id']})": w for w in workflows}
-selected_label = st.selectbox("Workflow", list(wf_map.keys()), key="caw_wf_sel")
-selected_wf = wf_map[selected_label]
-
-if "caw_wf_detail" not in st.session_state:
-    if st.button("Confirm & Load Details", key="caw_confirm_wf"):
-        with st.spinner("Loading workflow detail…"):
-            detail = setup_api.get_prompting_setting_by_id(selected_wf["id"])
-        if detail is None:
-            st.error(f"Failed to load workflow detail. {setup_api.last_error or ''}")
-        else:
-            st.session_state["caw_wf_detail"] = detail
-            st.rerun()
-    st.stop()
-
-wf_detail = st.session_state["caw_wf_detail"]
-st.success(
-    f"Workflow: **{wf_detail.get('name', selected_wf.get('name', 'Unknown'))}** "
-    f"(`{wf_detail.get('id', selected_wf['id'])}`)"
-)
-with st.expander("Workflow details"):
-    st.json(wf_detail)
-
-# ── 4b: Copy workflow to target ─────────────────────────────────────────────
-st.subheader("4b. Copy Workflow to Target Company")
-
-if "caw_copy_done" not in st.session_state:
-    wf_id = wf_detail.get("id") or selected_wf["id"]
-    st.write(
-        f"Copy workflow `{wf_id}` → target company `{target_company_id}`"
-    )
-    if st.button("Copy Workflow", key="caw_do_copy"):
-        with st.spinner("Copying workflow…"):
-            result = setup_api.copy_workflow(wf_id, target_company_id)
-        if result is None:
-            st.error(f"Copy failed. {setup_api.last_error or ''}")
-        else:
-            st.session_state["caw_copy_done"] = result
-            st.rerun()
-    st.stop()
-
-st.success("Workflow copied to target company.")
-with st.expander("Copy response"):
-    st.json(st.session_state["caw_copy_done"])
-
-# ── 4c: Update agent prompts in target company ──────────────────────────────
-st.subheader("4c. Update Agent Prompts in Target Company")
-
-if "caw_agents_done" not in st.session_state:
-    st.write(
-        f"Fetches all agents for target company `{target_company_id}`, replaces "
-        "every `_` followed by 24 hex chars in prompts with "
-        f"`_{target_company_id}`, increments the agent version, then PUTs each agent back."
-    )
-    if st.button("Fetch Agents & Update Prompts", key="caw_update_agents"):
-        with st.spinner("Fetching target company agents…"):
-            agents_list = setup_api.get_agents(target_company_id)
-        if not agents_list:
-            st.error(f"No agents found or fetch failed. {setup_api.last_error or ''}")
-        else:
-            agent_ids = [a.get("id") for a in agents_list if a.get("id")]
-            pattern = re.compile(r'_[a-fA-F0-9]{24}')
-            results = []
-            progress_bar = st.progress(0)
-            total = len(agent_ids)
-
-            for i, agent_id in enumerate(agent_ids):
-                # Fetch all versions; latest is the first element
-                versions = setup_api.get_agent_by_id(agent_id)
-                if not versions:
+            progress = st.progress(0.0, text="Copying agents…")
+            for i, sid in enumerate(picked_ids):
+                full = src_api.get_agent(sid)
+                if not full:
                     results.append({
-                        "agent": agent_id,
-                        "id": agent_id,
-                        "version": "-",
-                        "replacements": "",
-                        "status": f"FAILED: could not fetch versions. {setup_api.last_error or ''}",
+                        "name": sid, "version": "-",
+                        "status": f"FAILED (fetch): {src_api.last_error or ''}",
+                        "payload": None, "response": None,
                     })
-                    progress_bar.progress((i + 1) / total)
+                    progress.progress((i + 1) / len(picked_ids))
                     continue
-
-                agent = versions[0]
-                prompt = agent.get("prompt") or ""
-
-                matches = pattern.findall(prompt)
-                unique = set(matches)
-                replacements_label = (
-                    ", ".join(f"{m} → _{target_company_id}" for m in sorted(unique))
-                    if matches else "none"
-                )
-
-                new_prompt = pattern.sub(f"_{target_company_id}", prompt)
-
-                version_str = str(agent.get("version", "1.0"))
-                try:
-                    new_version = str(int(float(version_str)) + 1)
-                except (ValueError, TypeError):
-                    new_version = "2"
-
-                # Strip only server-managed timestamps; id and companyId must be included
-                read_only_fields = {"createdAt", "updatedAt"}
-                payload = {
-                    k: v for k, v in agent.items() if k not in read_only_fields
-                }
-                payload["prompt"] = new_prompt
-                payload["version"] = new_version
-
-                update_result = setup_api.update_agent(agent_id, payload)
-                if update_result is not None:
+                override_name = None
+                if suffix:
+                    override_name = f"{full.get('name', '')}{suffix}"
+                created, err, payload = _post_agent(full, override_name=override_name)
+                if created:
                     results.append({
-                        "agent": agent.get("name", agent_id),
-                        "id": agent_id,
-                        "sent_version": new_version,
-                        "replacements": replacements_label,
+                        "name": payload.get("name"), "version": payload.get("version", "-"),
                         "status": "OK",
-                        "payload": payload,
-                        "api_response": update_result,
+                        "payload": payload, "response": created,
                     })
                 else:
                     results.append({
-                        "agent": agent.get("name", agent_id),
-                        "id": agent_id,
-                        "sent_version": new_version,
-                        "replacements": replacements_label,
-                        "status": f"FAILED: {setup_api.last_error or 'unknown error'}",
-                        "payload": payload,
-                        "api_response": None,
+                        "name": payload.get("name"), "version": payload.get("version", "-"),
+                        "status": f"FAILED (create): {err or ''}",
+                        "payload": payload, "response": None,
                     })
-
-                progress_bar.progress((i + 1) / total)
-
-            st.session_state["caw_agents_done"] = True
-            st.session_state["caw_update_results"] = results
+                progress.progress((i + 1) / len(picked_ids))
+            st.session_state["caw_agent_results"] = results
             st.rerun()
-    st.stop()
 
-update_results = st.session_state.get("caw_update_results", [])
-failed = [r for r in update_results if not r["status"].startswith("OK")]
-if failed:
-    st.warning(f"Completed with {len(failed)} failure(s).")
-else:
-    st.success(f"All {len(update_results)} agent(s) updated successfully.")
-
-for r in update_results:
-    icon = "✅" if r["status"] == "OK" else "❌"
-    label = f"{icon} **{r['agent']}** — version sent: `{r['sent_version']}` — replacements: {r['replacements']} — {r['status']}"
-    with st.expander(label, expanded=r["status"] != "OK"):
-        st.write("**Payload sent:**")
-        st.json(r["payload"])
-        st.write("**API response:**")
-        if r["api_response"] is not None:
-            st.json(r["api_response"])
-        else:
-            st.write("_(no response body)_")
-
-if st.button("Reset Step 4", key="caw_reset_step4"):
-    for key in ["caw_workflows", "caw_wf_detail", "caw_copy_done",
-                "caw_agents_done", "caw_update_results"]:
-        st.session_state.pop(key, None)
-    st.rerun()
+    results = st.session_state.get("caw_agent_results")
+    if results:
+        st.subheader("Result")
+        failed = [r for r in results if not r["status"].startswith("OK")]
+        (st.warning if failed else st.success)(
+            f"Completed with {len(failed)} failure(s) / {len(results) - len(failed)} success(es)."
+        )
+        for r in results:
+            icon = "✅" if r["status"] == "OK" else "❌"
+            with st.expander(
+                f"{icon} {r['name']} v{r['version']} — {r['status']}",
+                expanded=r["status"] != "OK",
+            ):
+                if r["payload"] is not None:
+                    st.write("**Payload sent:**")
+                    st.json(r["payload"])
+                if r["response"] is not None:
+                    st.write("**API response:**")
+                    st.json(r["response"])

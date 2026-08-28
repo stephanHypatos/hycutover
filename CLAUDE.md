@@ -23,6 +23,9 @@ pages/
   1_Clone_Projects.py               # Project cloning + routing rules + model ID
   2_Bulk_Schema_Comparison.py       # Bulk comparison via Excel upload
   3_Config_Clone_Update.py          # Config update, config clone, schema clone
+  4_Copy_Agent_Workflow.py          # Copy an agent workflow (and referenced agents) between
+                                    # companies, or duplicate within one company, using
+                                    # /agents and /agent-workflows
 requirements.txt
 ```
 
@@ -30,7 +33,8 @@ requirements.txt
 
 - Base URLs: `https://api.cloud.hypatos.ai/v2` (EU), `https://api.cloud.hypatos.com/v2` (US)
 - Auth: OAuth 2.0 Client Credentials Grant via `POST /auth/token`
-- Key endpoints: `/projects`, `/projects/{id}`, `/projects/{id}/schema`, `/routings`
+- Key endpoints: `/projects`, `/projects/{id}`, `/projects/{id}/schema`, `/routings`,
+  `/agents`, `/agents/{id}`, `/agent-workflows`, `/agent-workflows/{id}`
 - All API methods live in `auth.py` → `HypatosAPI` class
 
 ## Running
