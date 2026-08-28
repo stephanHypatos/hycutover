@@ -355,6 +355,136 @@ class HypatosAPI:
             print(f"Unexpected error while processing file batch: {err}")
         return None
 
+    # ------------------------------------------------------------------
+    # Agent management (/agents, /agent-workflows)
+    # ------------------------------------------------------------------
+
+    def list_agents(self, editor: str = None) -> list:
+        """
+        GET /agents — paginated. Returns the full list of agents
+        (summary projection: prompt/configuration empty, toolIds null).
+        """
+        url = f"{self.base_url}/agents"
+        headers = self.get_headers()
+        limit = 50
+        offset = 0
+        results = []
+        try:
+            while True:
+                params = {"limit": limit, "offset": offset}
+                if editor:
+                    params["editor"] = editor
+                response = requests.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                body = response.json()
+                batch = body.get("data", []) if isinstance(body, dict) else []
+                results.extend(batch)
+                total = body.get("totalCount", len(results))
+                if len(results) >= total or not batch:
+                    break
+                offset += limit
+            self.last_error = None
+            return results
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+        except Exception as err:
+            self.last_error = str(err)
+        return []
+
+    def get_agent(self, agent_id: str, with_versions: bool = False) -> dict:
+        """GET /agents/{id} — full agent detail (prompt, configuration, toolIds populated)."""
+        url = f"{self.base_url}/agents/{agent_id}"
+        headers = self.get_headers()
+        params = {}
+        if with_versions:
+            params["withVersions"] = "true"
+        try:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            self.last_error = None
+            return response.json()
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+        except Exception as err:
+            self.last_error = str(err)
+        return None
+
+    def create_agent(self, payload: dict) -> dict:
+        """POST /agents — create a custom agent. Payload must not carry OOTB / source provenance fields."""
+        url = f"{self.base_url}/agents"
+        headers = self.get_headers()
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            self.last_error = None
+            return response.json()
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+        except Exception as err:
+            self.last_error = str(err)
+        return None
+
+    def list_agent_workflows(self, project_id: str = None, editor: str = None) -> list:
+        """GET /agent-workflows — paginated."""
+        url = f"{self.base_url}/agent-workflows"
+        headers = self.get_headers()
+        limit = 50
+        offset = 0
+        results = []
+        try:
+            while True:
+                params = {"limit": limit, "offset": offset}
+                if project_id:
+                    params["projectId"] = project_id
+                if editor:
+                    params["editor"] = editor
+                response = requests.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                body = response.json()
+                batch = body.get("data", []) if isinstance(body, dict) else []
+                results.extend(batch)
+                total = body.get("totalCount", len(results))
+                if len(results) >= total or not batch:
+                    break
+                offset += limit
+            self.last_error = None
+            return results
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+        except Exception as err:
+            self.last_error = str(err)
+        return []
+
+    def get_agent_workflow(self, workflow_id: str) -> dict:
+        """GET /agent-workflows/{id} — full workflow detail with workflowConfiguration."""
+        url = f"{self.base_url}/agent-workflows/{workflow_id}"
+        headers = self.get_headers()
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            self.last_error = None
+            return response.json()
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+        except Exception as err:
+            self.last_error = str(err)
+        return None
+
+    def create_agent_workflow(self, payload: dict) -> dict:
+        """POST /agent-workflows — create a custom workflow."""
+        url = f"{self.base_url}/agent-workflows"
+        headers = self.get_headers()
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            self.last_error = None
+            return response.json()
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+        except Exception as err:
+            self.last_error = str(err)
+        return None
+
     def get_company_info(self, company_id: str = None):
         """
         Retrieves company information using the authenticated client's credentials.
