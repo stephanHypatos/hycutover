@@ -3,7 +3,6 @@ import json
 import streamlit as st
 import pandas as pd
 from auth import HypatosAPI
-from helpers import check_admin_access
 from config import BASE_URL_EU, BASE_URL_US
 
 st.set_page_config(page_title="Copy Agent Workflow", layout="wide")
@@ -12,9 +11,6 @@ st.caption(
     "Copies an agent workflow (and optionally the agents it references) between "
     "companies via the Agent Management REST API — or duplicates one within the same company."
 )
-
-if not check_admin_access():
-    st.stop()
 
 # Provenance / server-managed fields that must be stripped before POST.
 AGENT_STRIP = {
