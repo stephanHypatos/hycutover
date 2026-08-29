@@ -25,7 +25,12 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
   go, resolving names / email addresses to user ids automatically.
   See [Guide: Manage Project Users](#guide-manage-project-users).
 - **Copy composite enrichment workflows** — copy composite enrichment
-  workflows between companies.
+  workflow definitions (YAML) between companies, or duplicate them within one,
+  via the `/enrichment-workflows` REST API. Handles name conflicts (skip /
+  overwrite / create) and re-maps or drops the company-specific `projectIds`.
+- **Compare composite enrichment workflows** — side-by-side, line-level diff of
+  two enrichment workflow definitions plus their name, description and project
+  bindings. Purpose-built for spotting prod-vs-test drift.
 - **File batch processing** — upload files and trigger batch processing.
 - **Copy documents** — replay documents from one project into another.
 - **Polling** — inspect long-running operations.
@@ -40,6 +45,8 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
    - `agents.read`, `agents.write` (Copy Agent Workflow and Compare
      Agents & Workflows pages)
    - `users.read` (Manage Project Users page)
+   - `enrichment-workflows.read`, `enrichment-workflows.write` (Copy and
+     Compare Composite Enrichment Workflows pages)
 
 Read more:
 <https://docs-internal.hypatos.ai/implementation-playbook/introduction-to-implementation-playbook/implementation-playbook/create-or-update-keycloak-credentials>

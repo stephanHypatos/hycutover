@@ -557,6 +557,97 @@ class HypatosAPI:
             self.last_error = str(err)
         return None
 
+    # ------------------------------------------------------------------
+    # Composite enrichment workflows (/enrichment-workflows)
+    # ------------------------------------------------------------------
+
+    def list_enrichment_workflows(self) -> list:
+        """
+        GET /enrichment-workflows — paginated (the API caps `limit` at 50).
+        Each item already carries the full YAML `definition`.
+        """
+        url = f"{self.base_url}/enrichment-workflows"
+        headers = self.get_headers()
+        limit = 50
+        offset = 0
+        results = []
+        try:
+            while True:
+                params = {"limit": limit, "offset": offset}
+                response = requests.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                body = response.json()
+                batch = body.get("data", []) if isinstance(body, dict) else []
+                results.extend(batch)
+                total = body.get("totalCount", len(results))
+                if len(results) >= total or not batch:
+                    break
+                offset += limit
+            self.last_error = None
+            return results
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while listing enrichment workflows: {self.last_error}")
+        except Exception as err:
+            self.last_error = str(err)
+            print(f"Unexpected error while listing enrichment workflows: {err}")
+        return []
+
+    def get_enrichment_workflow(self, workflow_id: str) -> dict:
+        """GET /enrichment-workflows/{workflowId}."""
+        url = f"{self.base_url}/enrichment-workflows/{workflow_id}"
+        try:
+            response = requests.get(url, headers=self.get_headers())
+            response.raise_for_status()
+            self.last_error = None
+            return response.json()
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while fetching enrichment workflow {workflow_id}: {self.last_error}")
+        except Exception as err:
+            self.last_error = str(err)
+            print(f"Unexpected error while fetching enrichment workflow {workflow_id}: {err}")
+        return None
+
+    def create_enrichment_workflow(self, payload: dict) -> dict:
+        """
+        POST /enrichment-workflows — payload accepts name (required),
+        definition (required, YAML string), description and projectIds.
+        Server-managed fields (id, companyId, version, timestamps) must not be sent.
+        """
+        url = f"{self.base_url}/enrichment-workflows"
+        try:
+            response = requests.post(url, headers=self.get_headers(), json=payload)
+            response.raise_for_status()
+            self.last_error = None
+            return response.json()
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while creating enrichment workflow: {self.last_error}")
+        except Exception as err:
+            self.last_error = str(err)
+            print(f"Unexpected error while creating enrichment workflow: {err}")
+        return None
+
+    def update_enrichment_workflow(self, workflow_id: str, payload: dict) -> dict:
+        """
+        PUT /enrichment-workflows/{workflowId} — full replace, so `name` and
+        `definition` always have to be present in the payload.
+        """
+        url = f"{self.base_url}/enrichment-workflows/{workflow_id}"
+        try:
+            response = requests.put(url, headers=self.get_headers(), json=payload)
+            response.raise_for_status()
+            self.last_error = None
+            return response.json()
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while updating enrichment workflow {workflow_id}: {self.last_error}")
+        except Exception as err:
+            self.last_error = str(err)
+            print(f"Unexpected error while updating enrichment workflow {workflow_id}: {err}")
+        return None
+
     def get_company_info(self, company_id: str = None):
         """
         Retrieves company information using the authenticated client's credentials.
