@@ -31,7 +31,9 @@ pages/
   4_Copy_Agent_Workflow.py               # Copy an agent workflow (and referenced agents) between
                                          # companies, or duplicate within one company, using
                                          # /agents and /agent-workflows
-  5_Copy_Composite_Enrichment_Workflow.py# Copy composite enrichment workflows
+  5_Copy_Composite_Enrichment_Workflow.py# Copy/duplicate composite enrichment workflow
+                                         # definitions (YAML) via /enrichment-workflows on the
+                                         # main v2 API. Conflict handling + projectIds re-mapping.
   6_File_Batch.py                        # Upload files and trigger batch processing
   7_Copy_Documents.py                    # Replay documents from one project into another
   8_Polling.py                           # Inspect long-running operations
@@ -41,6 +43,10 @@ pages/
   10_Manage_Project_Users.py             # Inspect and bulk-edit project member access for one
                                          # company. Session-local "user groups" are resolved to
                                          # user ids. Uses /users and PATCH /projects/{id}.
+  11_Compare_Composite_Enrichment_Workflows.py
+                                         # Side-by-side, line-level diff of two enrichment
+                                         # workflow definitions (name, description, YAML
+                                         # definition, projectIds). Prod-vs-test drift check.
 requirements.txt
 ```
 
@@ -50,10 +56,13 @@ requirements.txt
 - Auth: OAuth 2.0 Client Credentials Grant via `POST /auth/token`
 - Key endpoints: `/projects`, `/projects/{id}`, `/projects/{id}/schema`,
   `/routings`, `/agents`, `/agents/{id}`, `/agent-workflows`,
-  `/agent-workflows/{id}`, `/users`, `/users/{id}`
+  `/agent-workflows/{id}`, `/users`, `/users/{id}`,
+  `/enrichment-workflows`, `/enrichment-workflows/{id}`
 - All REST API methods live in `auth.py` → `HypatosAPI` class
 - `setup_api.py` → `SetupAPI` covers the cookie-authenticated
-  `setup.cloud.hypatos.ai` API used by the composite enrichment page
+  `setup.cloud.hypatos.ai` API. It is now legacy: the composite enrichment
+  pages were migrated to the OAuth2 `/enrichment-workflows` endpoints on the
+  main v2 API (`HypatosAPI`), so `SetupAPI` is no longer used by them.
 
 ## Running
 
@@ -86,6 +95,13 @@ streamlit run Home.py
 - There is no group concept in the API. Groups on the Manage Project Users
   page live in `st.session_state` (`mpu_groups`) and are resolved to user ids
   at assignment time; they can be exported / imported as JSON.
+- An enrichment workflow `definition` is a YAML string. Create (POST) and
+  update (PUT) accept only `name` (required), `definition` (required),
+  `description` and `projectIds`; PUT is a full replace. The copy page
+  (`cew_*`) re-fetches the source `definition` fresh before writing to avoid
+  stale cached YAML; the compare page (`ccew_*`) diffs `definition` with
+  `difflib.unified_diff`. `projectIds` are company-specific, so the copy page
+  either drops them, keeps them (same-company only) or re-maps by project name.
 
 ## Required API Scopes
 
@@ -94,3 +110,5 @@ streamlit run Home.py
 - `companies.read`
 - `agents.read`, `agents.write` (Copy Agent Workflow, Compare Agents & Workflows)
 - `users.read` (Manage Project Users)
+- `enrichment-workflows.read`, `enrichment-workflows.write` (Copy and Compare
+  Composite Enrichment Workflows)
