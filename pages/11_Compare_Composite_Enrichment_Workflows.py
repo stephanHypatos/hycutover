@@ -26,7 +26,6 @@ def _meta(workflow: dict) -> dict:
         "name": workflow.get("name"),
         "description": workflow.get("description") or "",
         "version": workflow.get("versionString") or workflow.get("version"),
-        "projectIds": workflow.get("projectIds") or [],
         "definition lines": len(definition.splitlines()),
         "updatedAt": workflow.get("updatedAt"),
         "id": workflow.get("id"),
@@ -244,7 +243,7 @@ else:
 st.caption(
     "Project bindings (`projectIds`) are **not compared** — project ids are unique to each "
     "company, so they always differ and are not meaningful for drift detection. They are "
-    "shown per side below for reference only."
+    "omitted from the comparison entirely (still visible in each side's *Full JSON* below)."
 )
 
 meta_a, meta_b = st.columns(2)
