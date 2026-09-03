@@ -280,8 +280,12 @@ class HypatosAPI:
                 body = response.json()
                 batch = body.get("data", []) if isinstance(body, dict) else []
                 results.extend(batch)
-                total = body.get("totalCount", len(results))
-                if len(results) >= total or not batch:
+                # Stop on a short/empty page; don't rely on totalCount, which some
+                # endpoints omit (that would truncate the list at the first page).
+                if not batch or len(batch) < limit:
+                    break
+                total = body.get("totalCount")
+                if total is not None and len(results) >= total:
                     break
                 offset += limit
             self.last_error = None
@@ -454,8 +458,12 @@ class HypatosAPI:
                 body = response.json()
                 batch = body.get("data", []) if isinstance(body, dict) else []
                 results.extend(batch)
-                total = body.get("totalCount", len(results))
-                if len(results) >= total or not batch:
+                # Stop on a short/empty page; don't rely on totalCount, which some
+                # endpoints omit (that would truncate the list at the first page).
+                if not batch or len(batch) < limit:
+                    break
+                total = body.get("totalCount")
+                if total is not None and len(results) >= total:
                     break
                 offset += limit
             self.last_error = None
@@ -518,8 +526,12 @@ class HypatosAPI:
                 body = response.json()
                 batch = body.get("data", []) if isinstance(body, dict) else []
                 results.extend(batch)
-                total = body.get("totalCount", len(results))
-                if len(results) >= total or not batch:
+                # Stop on a short/empty page; don't rely on totalCount, which some
+                # endpoints omit (that would truncate the list at the first page).
+                if not batch or len(batch) < limit:
+                    break
+                total = body.get("totalCount")
+                if total is not None and len(results) >= total:
                     break
                 offset += limit
             self.last_error = None
@@ -582,8 +594,12 @@ class HypatosAPI:
                 body = response.json()
                 batch = body.get("data", []) if isinstance(body, dict) else []
                 results.extend(batch)
-                total = body.get("totalCount", len(results))
-                if len(results) >= total or not batch:
+                # Stop on a short/empty page; don't rely on totalCount, which some
+                # endpoints omit (that would truncate the list at the first page).
+                if not batch or len(batch) < limit:
+                    break
+                total = body.get("totalCount")
+                if total is not None and len(results) >= total:
                     break
                 offset += limit
             self.last_error = None
