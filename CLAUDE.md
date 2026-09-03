@@ -46,7 +46,8 @@ pages/
   11_Compare_Composite_Enrichment_Workflows.py
                                          # Side-by-side, line-level diff of two enrichment
                                          # workflow definitions (name, description, YAML
-                                         # definition, projectIds). Prod-vs-test drift check.
+                                         # definition). projectIds are excluded from the
+                                         # comparison (company-specific). Prod-vs-test drift.
 requirements.txt
 ```
 
@@ -101,7 +102,9 @@ streamlit run Home.py
   (`cew_*`) re-fetches the source `definition` fresh before writing to avoid
   stale cached YAML; the compare page (`ccew_*`) diffs `definition` with
   `difflib.unified_diff`. `projectIds` are company-specific, so the copy page
-  either drops them, keeps them (same-company only) or re-maps by project name.
+  either drops them, keeps them (same-company only) or re-maps by project name,
+  and the compare page excludes them from the comparison entirely (shown per
+  side for reference only).
 
 ## Required API Scopes
 

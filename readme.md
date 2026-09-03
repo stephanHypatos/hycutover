@@ -29,8 +29,9 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
   via the `/enrichment-workflows` REST API. Handles name conflicts (skip /
   overwrite / create) and re-maps or drops the company-specific `projectIds`.
 - **Compare composite enrichment workflows** — side-by-side, line-level diff of
-  two enrichment workflow definitions plus their name, description and project
-  bindings. Purpose-built for spotting prod-vs-test drift.
+  two enrichment workflow definitions plus their name and description. Project
+  bindings (`projectIds`) are excluded, since the ids are unique per company and
+  always differ. Purpose-built for spotting prod-vs-test drift.
 - **File batch processing** — upload files and trigger batch processing.
 - **Copy documents** — replay documents from one project into another.
 - **Polling** — inspect long-running operations.

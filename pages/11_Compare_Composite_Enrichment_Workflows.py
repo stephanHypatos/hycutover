@@ -1,6 +1,5 @@
 import difflib
 
-import pandas as pd
 import streamlit as st
 
 from auth import HypatosAPI
@@ -27,7 +26,6 @@ def _meta(workflow: dict) -> dict:
         "name": workflow.get("name"),
         "description": workflow.get("description") or "",
         "version": workflow.get("versionString") or workflow.get("version"),
-        "projectIds": workflow.get("projectIds") or [],
         "definition lines": len(definition.splitlines()),
         "updatedAt": workflow.get("updatedAt"),
         "id": workflow.get("id"),
@@ -69,21 +67,6 @@ def _text_diff(text_a: str, text_b: str, label: str):
     with col_r:
         with st.expander("B · raw"):
             st.code(text_b or "(empty)", language="yaml")
-
-
-def _json_diff(obj_a, obj_b, label: str):
-    st.markdown(f"### {label}")
-    if obj_a == obj_b:
-        st.success("Identical")
-    else:
-        st.warning("Different")
-    col_l, col_r = st.columns(2)
-    with col_l:
-        st.markdown("**A**")
-        st.json(obj_a)
-    with col_r:
-        st.markdown("**B**")
-        st.json(obj_b)
 
 
 col_reset_l, col_reset_r = st.columns([5, 1])
@@ -252,11 +235,16 @@ if (
     a_def == b_def
     and (a_full.get("name") or "") == (b_full.get("name") or "")
     and (a_full.get("description") or "") == (b_full.get("description") or "")
-    and (a_full.get("projectIds") or []) == (b_full.get("projectIds") or [])
 ):
-    st.success("✅ The two workflows are identical (name, description, projectIds and definition).")
+    st.success("✅ The two workflows are identical (name, description and definition).")
 else:
     st.warning("❗️ The two workflows differ. See the field-by-field comparison below.")
+
+st.caption(
+    "Project bindings (`projectIds`) are **not compared** — project ids are unique to each "
+    "company, so they always differ and are not meaningful for drift detection. They are "
+    "omitted from the comparison entirely (still visible in each side's *Full JSON* below)."
+)
 
 meta_a, meta_b = st.columns(2)
 with meta_a:
@@ -269,7 +257,6 @@ with meta_b:
 _text_diff(a_full.get("name"), b_full.get("name"), "Name")
 _text_diff(a_full.get("description"), b_full.get("description"), "Description")
 _text_diff(a_def, b_def, "Definition (YAML)")
-_json_diff(a_full.get("projectIds") or [], b_full.get("projectIds") or [], "Project bindings (projectIds)")
 
 with st.expander("Full A JSON"):
     st.json(a_full)
