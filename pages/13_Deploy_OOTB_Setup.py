@@ -21,11 +21,21 @@ st.caption(
 # ---------------------------------------------------------------------------
 # The project ids that make up each setup live in .streamlit/secrets.toml under
 # [ootb.setups.*]. This dict is the shape / fallback; secrets override it.
+def _empty_setup(label, group):
+    return {
+        "label": label,
+        "group": group,
+        "project_ids": [],
+        "enrichment_workflow_ids": [],
+        "agent_workflow_ids": [],
+    }
+
+
 DEFAULT_SETUPS = {
-    "invoice_processing_a": {"label": "Invoice Processing — Setup A", "group": "Invoice Processing", "project_ids": []},
-    "invoice_processing_b": {"label": "Invoice Processing — Setup B", "group": "Invoice Processing", "project_ids": []},
-    "order_confirmation": {"label": "Order Confirmation", "group": "Order Confirmation", "project_ids": []},
-    "order_management": {"label": "Order Management", "group": "Order Management", "project_ids": []},
+    "invoice_processing_a": _empty_setup("Invoice Processing — Setup A", "Invoice Processing"),
+    "invoice_processing_b": _empty_setup("Invoice Processing — Setup B", "Invoice Processing"),
+    "order_confirmation": _empty_setup("Order Confirmation", "Order Confirmation"),
+    "order_management": _empty_setup("Order Management", "Order Management"),
 }
 
 
@@ -37,10 +47,12 @@ def _load_setups() -> dict:
     except Exception:
         return setups
     for key, val in dict(cfg).items():
-        base = dict(setups.get(key, {"label": key, "group": "Other", "project_ids": []}))
+        base = dict(setups.get(key, _empty_setup(key, "Other")))
         base["label"] = val.get("label", base.get("label", key))
         base["group"] = val.get("group", base.get("group", "Other"))
         base["project_ids"] = [str(p) for p in (val.get("project_ids") or [])]
+        base["enrichment_workflow_ids"] = [str(p) for p in (val.get("enrichment_workflow_ids") or [])]
+        base["agent_workflow_ids"] = [str(p) for p in (val.get("agent_workflow_ids") or [])]
         setups[key] = base
     return setups
 
@@ -313,6 +325,8 @@ setup_key = st.radio(
 
 setup = setups[setup_key]
 setup_project_ids = setup["project_ids"]
+setup_enrichment_ids = setup["enrichment_workflow_ids"]
+setup_agent_workflow_ids = setup["agent_workflow_ids"]
 
 if not setup_project_ids:
     st.warning(
@@ -321,7 +335,18 @@ if not setup_project_ids:
     )
     st.stop()
 
-st.caption(f"**{setup['label']}** → {len(setup_project_ids)} template project(s).")
+st.caption(
+    f"**{setup['label']}** → {len(setup_project_ids)} project(s), "
+    f"{len(setup_enrichment_ids)} enrichment workflow(s), "
+    f"{len(setup_agent_workflow_ids)} agentic workflow(s) configured."
+)
+if not setup_enrichment_ids and not setup_agent_workflow_ids:
+    st.info(
+        "No `enrichment_workflow_ids` / `agent_workflow_ids` configured for this setup — "
+        "the page will fall back to discovering them from the project bindings, which may find "
+        "nothing if the template workflows are not bound to these projects. Add the ids under "
+        f"`[ootb.setups.{setup_key}]` in secrets.toml for a reliable clone."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -345,24 +370,44 @@ if st.button("Run pre-flight check", key="ootb_preflight"):
             else:
                 missing_projects.append(pid)
 
-        # Enrichment workflows bound to the setup projects.
         setup_id_set = set(setup_project_ids)
-        enrichment = [
-            w for w in src_api.list_enrichment_workflows()
-            if setup_id_set & set(w.get("projectIds") or [])
-        ]
+        missing_enrichment = []
+        missing_workflows = []
 
-        # Agent workflows assigned to the setup projects + referenced agents.
-        wf_summaries = {}
-        for pid in setup_project_ids:
-            for w in src_api.list_agent_workflows(project_id=pid):
-                if w.get("id"):
-                    wf_summaries.setdefault(w["id"], w)
+        # Enrichment workflows: explicit ids from config, else discover by project binding.
+        if setup_enrichment_ids:
+            enrichment = []
+            for wid in setup_enrichment_ids:
+                wf = src_api.get_enrichment_workflow(wid)
+                if wf:
+                    enrichment.append(wf)
+                else:
+                    missing_enrichment.append(wid)
+        else:
+            enrichment = [
+                w for w in src_api.list_enrichment_workflows()
+                if setup_id_set & set(w.get("projectIds") or [])
+            ]
+
+        # Agentic workflows: explicit ids from config, else discover by project binding.
         workflows = []
-        for wid in wf_summaries:
-            detail = src_api.get_agent_workflow(wid)
-            if detail:
-                workflows.append(detail)
+        if setup_agent_workflow_ids:
+            for wid in setup_agent_workflow_ids:
+                detail = src_api.get_agent_workflow(wid)
+                if detail:
+                    workflows.append(detail)
+                else:
+                    missing_workflows.append(wid)
+        else:
+            wf_summaries = {}
+            for pid in setup_project_ids:
+                for w in src_api.list_agent_workflows(project_id=pid):
+                    if w.get("id"):
+                        wf_summaries.setdefault(w["id"], w)
+            for wid in wf_summaries:
+                detail = src_api.get_agent_workflow(wid)
+                if detail:
+                    workflows.append(detail)
 
         src_agents = src_api.list_agents()
         referenced = {}
@@ -394,6 +439,8 @@ if st.button("Run pre-flight check", key="ootb_preflight"):
         "setup_key": setup_key,
         "src_project_names": src_project_names,
         "missing_projects": missing_projects,
+        "missing_enrichment": missing_enrichment,
+        "missing_workflows": missing_workflows,
         "enrichment": enrichment,
         "workflows": workflows,
         "agents": agents,
@@ -427,6 +474,18 @@ if plan["missing_projects"]:
     st.warning(
         "These configured project ids were not found in the template company and will be "
         "skipped: " + ", ".join(f"`{p}`" for p in plan["missing_projects"])
+    )
+
+if plan.get("missing_enrichment"):
+    st.warning(
+        "These configured `enrichment_workflow_ids` were not found in the template company: "
+        + ", ".join(f"`{p}`" for p in plan["missing_enrichment"])
+    )
+
+if plan.get("missing_workflows"):
+    st.warning(
+        "These configured `agent_workflow_ids` were not found in the template company: "
+        + ", ".join(f"`{p}`" for p in plan["missing_workflows"])
     )
 
 if plan["enrich_collisions"]:

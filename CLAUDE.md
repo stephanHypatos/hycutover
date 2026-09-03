@@ -124,9 +124,14 @@ streamlit run Home.py
   Prompts/definitions are wrapped in a code fence sized longer than any backtick
   run they contain (`_fence`).
 - The Deploy OOTB Setup page (`ootb_*`) is the template-clone flow extended to
-  routings + enrichment + agent workflows. Setup->projectIds mapping lives in
-  `st.secrets["ootb"]["setups"]` (with a `DEFAULT_SETUPS` fallback shape);
-  template creds are the same `CLIENT_ID` / `CLIENT_SECRET` as page 1. Deploy
+  routings + enrichment + agent workflows. Each setup in
+  `st.secrets["ootb"]["setups"]` (with a `DEFAULT_SETUPS` fallback shape) names
+  its artefacts by template id: `project_ids`, `enrichment_workflow_ids` and
+  `agent_workflow_ids`. The workflow ids are explicit because template workflows
+  are not reliably bound to the setup projects; when the id lists are empty the
+  page falls back to project-binding discovery (enrichment `projectIds` /
+  `list_agent_workflows(project_id=...)`). Template creds are the same
+  `CLIENT_ID` / `CLIENT_SECRET` as page 1. Deploy
   order is projects -> routings -> enrichment -> agents -> agent workflows;
   `project_id_map` (source->target) remaps enrichment `projectIds`, routing
   `from/toProjectId`, and each workflow's `projects` / `trainingProjects`
