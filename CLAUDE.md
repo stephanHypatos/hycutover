@@ -52,6 +52,12 @@ pages/
                                          # enrichment workflows, dynamic agent workflows,
                                          # referenced agents and routing rules, and download a
                                          # ZIP of one Markdown file per artefact.
+  13_Deploy_OOTB_Setup.py                # One-click clone of a pre-defined OOTB setup (projects,
+                                         # routings, composite enrichment, agentic workflows +
+                                         # agents) from the template company (secrets creds) to a
+                                         # target company. Setup->projectIds mapping in secrets
+                                         # ([ootb.setups.*]). Pre-flight blocks on agent name:
+                                         # version collisions in the target.
 requirements.txt
 ```
 
@@ -117,6 +123,17 @@ streamlit run Home.py
   and zips them in memory (`zipfile` + `io.BytesIO`) for `st.download_button`.
   Prompts/definitions are wrapped in a code fence sized longer than any backtick
   run they contain (`_fence`).
+- The Deploy OOTB Setup page (`ootb_*`) is the template-clone flow extended to
+  routings + enrichment + agent workflows. Setup->projectIds mapping lives in
+  `st.secrets["ootb"]["setups"]` (with a `DEFAULT_SETUPS` fallback shape);
+  template creds are the same `CLIENT_ID` / `CLIENT_SECRET` as page 1. Deploy
+  order is projects -> routings -> enrichment -> agents -> agent workflows;
+  `project_id_map` (source->target) remaps enrichment `projectIds`, routing
+  `from/toProjectId`, and each workflow's `projects` / `trainingProjects`
+  (`_remap_project_ref`), while `agent_id_map` rewrites `workflowConfiguration`
+  UUIDs (`_rewrite_uuids`). A read-only pre-flight blocks the deploy on agent
+  `name:version` collisions in the target and skips same-named enrichment
+  workflows. Reuses page 4's `AGENT_STRIP` / `WORKFLOW_STRIP` sanitize sets.
 
 ## Required API Scopes
 
@@ -129,3 +146,6 @@ streamlit run Home.py
   Composite Enrichment Workflows)
 - `agents.read`, `enrichment-workflows.read`, `routings.read` (Export
   Configuration as Markdown)
+- `projects.read/write`, `routings.read/write`, `agents.read/write`,
+  `enrichment-workflows.read/write`, `companies.read` (Deploy new OOTB Setup —
+  read on the template, write on the target)

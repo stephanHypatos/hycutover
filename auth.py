@@ -332,10 +332,13 @@ class HypatosAPI:
         try:
             response = requests.post(url, json=rule_payload, headers=headers)
             response.raise_for_status()
+            self.last_error = None
             return response.json()
         except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
             print(f"HTTP error while creating routing rule: {http_err}")
         except Exception as err:
+            self.last_error = str(err)
             print(f"Unexpected error while creating routing rule: {err}")
         return None
 
