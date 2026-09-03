@@ -48,6 +48,10 @@ pages/
                                          # workflow definitions (name, description, YAML
                                          # definition). projectIds are excluded from the
                                          # comparison (company-specific). Prod-vs-test drift.
+  12_Export_Configuration_as_Markdown.py # Pick a company + projects, fetch their composite
+                                         # enrichment workflows, dynamic agent workflows,
+                                         # referenced agents and routing rules, and download a
+                                         # ZIP of one Markdown file per artefact.
 requirements.txt
 ```
 
@@ -105,6 +109,14 @@ streamlit run Home.py
   either drops them, keeps them (same-company only) or re-maps by project name,
   and the compare page excludes them from the comparison entirely (shown per
   side for reference only).
+- The Export Configuration page (`exp_*`) links projects to artefacts by their
+  native binding: enrichment workflows via `projectIds`, agent workflows via
+  `list_agent_workflows(project_id=...)`, referenced agents via UUID +
+  `name:version` scan of `workflowConfiguration`, and routing rules via
+  `fromProjectId` / `toProjectId`. It renders one Markdown file per artefact
+  and zips them in memory (`zipfile` + `io.BytesIO`) for `st.download_button`.
+  Prompts/definitions are wrapped in a code fence sized longer than any backtick
+  run they contain (`_fence`).
 
 ## Required API Scopes
 
@@ -115,3 +127,5 @@ streamlit run Home.py
 - `users.read` (Manage Project Users)
 - `enrichment-workflows.read`, `enrichment-workflows.write` (Copy and Compare
   Composite Enrichment Workflows)
+- `agents.read`, `enrichment-workflows.read`, `routings.read` (Export
+  Configuration as Markdown)

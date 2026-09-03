@@ -32,6 +32,10 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
   two enrichment workflow definitions plus their name and description. Project
   bindings (`projectIds`) are excluded, since the ids are unique per company and
   always differ. Purpose-built for spotting prod-vs-test drift.
+- **Export configuration as Markdown** — pick a company and a set of projects
+  and download a ZIP of Markdown files documenting their configuration: the
+  composite enrichment workflow(s), the dynamic agent workflow(s), one file per
+  referenced agent (name, system prompt, user prompt) and the routing rules.
 - **File batch processing** — upload files and trigger batch processing.
 - **Copy documents** — replay documents from one project into another.
 - **Polling** — inspect long-running operations.
@@ -48,6 +52,8 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
    - `users.read` (Manage Project Users page)
    - `enrichment-workflows.read`, `enrichment-workflows.write` (Copy and
      Compare Composite Enrichment Workflows pages)
+   - `agents.read`, `enrichment-workflows.read`, `routings.read` (Export
+     Configuration as Markdown page)
 
 Read more:
 <https://docs-internal.hypatos.ai/implementation-playbook/introduction-to-implementation-playbook/implementation-playbook/create-or-update-keycloak-credentials>
