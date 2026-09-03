@@ -382,7 +382,7 @@ if st.button("Run pre-flight check", key="ootb_preflight"):
                 if wf:
                     enrichment.append(wf)
                 else:
-                    missing_enrichment.append(wid)
+                    missing_enrichment.append({"id": wid, "error": src_api.last_error or "not found (HTTP 404)"})
         else:
             enrichment = [
                 w for w in src_api.list_enrichment_workflows()
@@ -397,7 +397,7 @@ if st.button("Run pre-flight check", key="ootb_preflight"):
                 if detail:
                     workflows.append(detail)
                 else:
-                    missing_workflows.append(wid)
+                    missing_workflows.append({"id": wid, "error": src_api.last_error or "not found (HTTP 404)"})
         else:
             wf_summaries = {}
             for pid in setup_project_ids:
@@ -478,15 +478,20 @@ if plan["missing_projects"]:
 
 if plan.get("missing_enrichment"):
     st.warning(
-        "These configured `enrichment_workflow_ids` were not found in the template company: "
-        + ", ".join(f"`{p}`" for p in plan["missing_enrichment"])
+        "These configured `enrichment_workflow_ids` could not be fetched from the template "
+        "company. An **HTTP 403** means the template credentials are missing the "
+        "`enrichment-workflows.read` scope; an **HTTP 404** means the id does not exist in "
+        "this company / region."
     )
+    st.dataframe(pd.DataFrame(plan["missing_enrichment"]), width="stretch", hide_index=True)
 
 if plan.get("missing_workflows"):
     st.warning(
-        "These configured `agent_workflow_ids` were not found in the template company: "
-        + ", ".join(f"`{p}`" for p in plan["missing_workflows"])
+        "These configured `agent_workflow_ids` could not be fetched from the template company. "
+        "An **HTTP 403** means the template credentials are missing the `agents.read` scope; an "
+        "**HTTP 404** means the id does not exist in this company / region."
     )
+    st.dataframe(pd.DataFrame(plan["missing_workflows"]), width="stretch", hide_index=True)
 
 if plan["enrich_collisions"]:
     st.warning(
