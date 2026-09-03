@@ -208,20 +208,36 @@ Each OOTB setup is a named list of **template-company project ids**, stored in
 source_region = "EU"   # region the template company lives in
 
 [ootb.setups.invoice_processing_a]
-label       = "Invoice Processing — Setup A"
-group       = "Invoice Processing"   # options with the same group share a category
-project_ids = ["<template-project-id-1>", "<template-project-id-2>"]
+label                   = "Invoice Processing — Setup A"
+group                   = "Invoice Processing"   # options with the same group share a category
+project_ids             = ["<template-project-id-1>", "<template-project-id-2>"]
+enrichment_workflow_ids = ["<enrichment-workflow-id>"]
+agent_workflow_ids      = ["<agent-workflow-id>"]
 
 [ootb.setups.order_confirmation]
-label       = "Order Confirmation"
-group       = "Order Confirmation"
-project_ids = ["..."]
+label                   = "Order Confirmation"
+group                   = "Order Confirmation"
+project_ids             = ["..."]
+enrichment_workflow_ids = ["..."]
+agent_workflow_ids      = ["..."]
 ```
 
 The template company's own credentials are the existing `CLIENT_ID` /
 `CLIENT_SECRET` in the same file. `group` controls the two-level menu, so
 *Invoice Processing* can offer Setup A / Setup B while the others are single
 options.
+
+Each setup names its artefacts by **template-company id**:
+
+- `project_ids` — the projects to clone (required).
+- `enrichment_workflow_ids` — the composite enrichment workflow(s) to clone.
+- `agent_workflow_ids` — the agentic (dynamic) workflow(s) to clone; their
+  referenced agents are resolved and cloned automatically.
+
+The enrichment / agent workflow ids are listed explicitly because template
+workflows are **not necessarily bound to these projects**, so they can't be
+discovered from the project bindings. If you leave those two lists empty the
+page falls back to project-binding discovery, which may find nothing.
 
 ### Steps
 
