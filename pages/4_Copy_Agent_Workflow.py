@@ -321,6 +321,18 @@ if mode.startswith("Agent Workflow"):
     if rows:
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
+    # Diagnostic: UUIDs in the config that do NOT resolve to any source agent.
+    unresolved_uuids = sorted(u for u in referenced_uuids if u not in src_by_id)
+    if unresolved_uuids:
+        with st.expander(f"Unresolved UUIDs in workflowConfiguration ({len(unresolved_uuids)})"):
+            st.caption(
+                "These UUIDs are not agents in the source company's /agents list. Most are workflow "
+                "node ids, but if the copy fails with 'agent not found' and the API names one of "
+                "these, the workflow references an agent that /agents does not return (e.g. a "
+                "global / OOTB agent) — which cannot be copied by name or id from here."
+            )
+            st.code("\n".join(unresolved_uuids), language="text")
+
     if same_company:
         st.info(
             "Same-company copy: referenced agents are reused as-is — only the workflow is duplicated. "
@@ -442,6 +454,9 @@ if mode.startswith("Agent Workflow"):
                 f"{icon} [{r['kind']}] {r['name']} — {r['status']}",
                 expanded=r["status"] != "OK",
             ):
+                if r["status"] != "OK":
+                    st.write("**Error (full API response):**")
+                    st.code(r["status"], language="text")
                 if r["payload"] is not None:
                     st.write("**Payload sent:**")
                     st.json(r["payload"])
