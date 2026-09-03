@@ -86,6 +86,27 @@ WORKFLOW_STRIP = {
 }
 ENRICHMENT_FIELDS = ("name", "definition", "description", "projectIds")
 
+# Always-available base model to fall back to when an agent's own model is not
+# active in the target company (create_agent -> 422 "Model is not active ...").
+BASE_MODEL_ID = "3548e0ca-e5e4-4c1a-8ca2-a0878036053e"
+
+
+def _is_model_inactive(err: str) -> bool:
+    if not err:
+        return False
+    e = err.lower()
+    return "422" in e and "model" in e and "not active" in e
+
+
+def _set_model(payload: dict, model_id: str):
+    matched = False
+    for key in ("model", "modelId"):
+        if key in payload:
+            payload[key] = model_id
+            matched = True
+    if not matched:
+        payload["model"] = model_id
+
 
 def _sanitize(obj: dict, strip_keys: set) -> dict:
     return {k: v for k, v in obj.items() if k not in strip_keys}
@@ -676,10 +697,18 @@ def _copy_agents():
         if not payload.get("version"):
             payload.pop("version", None)
         created = tgt_api.create_agent(payload)
+        note = ""
+        if created is None and _is_model_inactive(tgt_api.last_error):
+            _set_model(payload, BASE_MODEL_ID)
+            retried = tgt_api.create_agent(payload)
+            if retried is not None:
+                created = retried
+                note = " (model not active — reassigned to base model)"
         if created:
             agent_map[sid] = created.get("id")
             rows.append({"agent": full.get("name"), "src version": full.get("version"),
-                         "new version": created.get("version"), "status": "✅ created", "new id": created.get("id")})
+                         "new version": created.get("version"), "status": "✅ created" + note,
+                         "new id": created.get("id")})
         else:
             rows.append({"agent": full.get("name"), "src version": full.get("version"),
                          "new version": None, "status": f"❌ {tgt_api.last_error or 'failed'}", "new id": None})
