@@ -444,13 +444,22 @@ if st.button("Run pre-flight check", key="ootb_preflight"):
         "enrichment": enrichment,
         "workflows": workflows,
         "agents": agents,
+        "src_agent_index": [
+            {"id": a.get("id"), "name": a.get("name"), "version": a.get("version")}
+            for a in src_agents if a.get("id")
+        ],
         "agent_collisions": agent_collisions,
         "enrich_collisions": [w.get("name") for w in enrichment if w.get("name") in tgt_enrich_names],
         "model_id": model_id,
         "prefix": name_prefix,
         "suffix": name_suffix,
     }
-    st.session_state.pop("ootb_results", None)
+    # Clear any earlier step results so the plan and its steps start fresh.
+    for k in (
+        "ootb_results", "ootb_project_map", "ootb_res_projects", "ootb_res_routings",
+        "ootb_res_enrichment", "ootb_agent_map", "ootb_res_agents", "ootb_res_workflows",
+    ):
+        st.session_state.pop(k, None)
     st.rerun()
 
 plan = st.session_state.get("ootb_plan")
@@ -511,28 +520,45 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# Step 5 — Deploy
+# Step 5 — Deploy (run each step on its own; every step persists and re-runs)
 # ---------------------------------------------------------------------------
 st.header("Step 5: Deploy")
+st.caption(
+    "Run the steps in order. Each stores its result, so a failed step (e.g. the agentic "
+    "workflows) can be re-run without redoing the earlier ones. To start over cleanly, delete "
+    "the created artefacts in the target and re-run the pre-flight check."
+)
+
+# Gate the steps independently: projects need a model id; agents/workflows are
+# blocked only by agent collisions in the target.
+model_missing = not model_id
+agents_blocked = bool(plan["agent_collisions"])
+if model_missing:
+    st.warning("The selected target project has no extraction model id — the Projects step is disabled. Pick a different target project in Step 2.")
 
 
 def _affix(name: str) -> str:
     return f"{name_prefix or ''}{name or ''}{name_suffix or ''}"
 
 
-def _deploy():
-    results = {"projects": [], "routings": [], "enrichment": [], "agents": [], "workflows": []}
+def _result_table(rows):
+    if rows:
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    else:
+        st.caption("_no items_")
+
+
+# ----- 1. Projects -----
+def _copy_projects():
     headers = tgt_api.get_headers()
     create_url = f"{tgt_api.base_url}/projects"
-    project_id_map = {}
-
-    # --- 1. Projects ---
+    project_map, rows = {}, []
     for pid in setup_project_ids:
         name = plan["src_project_names"].get(pid, pid)
         detail = src_api.get_project_by_id(pid)
         schema = src_api.get_project_schema(pid)
         if not (detail and schema):
-            results["projects"].append({"project": name, "status": "❌ source fetch failed"})
+            rows.append({"source project": name, "status": "❌ source fetch failed"})
             continue
         payload = {
             "name": _affix(detail.get("name")),
@@ -548,116 +574,209 @@ def _deploy():
         resp = requests.post(create_url, json=payload, headers=headers)
         if resp.status_code == 201:
             new_id = resp.json().get("id")
-            project_id_map[pid] = new_id
-            results["projects"].append({"project": payload["name"], "status": "✅ created", "new id": new_id})
+            project_map[pid] = new_id
+            rows.append({"source project": name, "target project": payload["name"], "status": "✅ created", "new id": new_id})
         else:
-            results["projects"].append({"project": payload["name"], "status": f"❌ HTTP {resp.status_code}: {resp.text[:200]}"})
+            rows.append({"source project": name, "target project": payload["name"], "status": f"❌ HTTP {resp.status_code}: {resp.text[:300]}"})
+    return project_map, rows
 
-    # --- 2. Routing rules (both endpoints in the map) ---
+
+st.subheader("1) Projects")
+if st.button("Copy projects", key="ootb_s_projects", disabled=model_missing):
+    with st.spinner("Copying projects…"):
+        pmap, rows = _copy_projects()
+    st.session_state["ootb_project_map"] = pmap
+    st.session_state["ootb_res_projects"] = rows
+    st.rerun()
+if st.session_state.get("ootb_res_projects") is not None:
+    _result_table(st.session_state["ootb_res_projects"])
+    st.caption(f"Project id map: {len(st.session_state.get('ootb_project_map', {}))} project(s) mapped.")
+
+project_map = st.session_state.get("ootb_project_map")
+
+
+# ----- 2. Routing rules -----
+def _copy_routings(project_map):
+    rows = []
     for rid in src_api.get_all_routing_rule_ids(limit=50):
         rule = src_api.get_routing_by_id(rid)
         if not rule:
             continue
         frm, to = rule.get("fromProjectId"), rule.get("toProjectId")
-        if frm not in project_id_map or to not in project_id_map:
+        if frm not in project_map or to not in project_map:
             continue
         new_rule = dict(rule)
-        new_rule["fromProjectId"] = project_id_map[frm]
-        new_rule["toProjectId"] = project_id_map[to]
+        new_rule["fromProjectId"] = project_map[frm]
+        new_rule["toProjectId"] = project_map[to]
         for f in ("id", "createdAt", "updatedAt"):
             new_rule.pop(f, None)
         created = tgt_api.create_routing_rule(new_rule)
         route = f"{plan['src_project_names'].get(frm, frm)} → {plan['src_project_names'].get(to, to)}"
-        if created:
-            results["routings"].append({"route": route, "status": "✅ created", "new id": created.get("id")})
-        else:
-            results["routings"].append({"route": route, "status": f"❌ {tgt_api.last_error or 'failed'}"})
+        rows.append({
+            "route": route,
+            "status": "✅ created" if created else f"❌ {tgt_api.last_error or 'failed'}",
+            "new id": created.get("id") if created else None,
+        })
+    return rows
 
-    # --- 3. Composite enrichment workflows ---
-    tgt_enrich_names = {w.get("name") for w in tgt_api.list_enrichment_workflows()}
+
+st.subheader("2) Routing rules")
+if not project_map:
+    st.info("Copy the projects first — routing rules need the project id map.")
+else:
+    if st.button("Copy routing rules", key="ootb_s_routings"):
+        with st.spinner("Copying routing rules…"):
+            st.session_state["ootb_res_routings"] = _copy_routings(project_map)
+        st.rerun()
+    if st.session_state.get("ootb_res_routings") is not None:
+        _result_table(st.session_state["ootb_res_routings"])
+
+
+# ----- 3. Composite enrichment -----
+def _copy_enrichment(project_map):
+    tgt_names = {w.get("name") for w in tgt_api.list_enrichment_workflows()}
+    rows = []
     for wf in plan["enrichment"]:
-        if wf.get("name") in tgt_enrich_names:
-            results["enrichment"].append({"workflow": wf.get("name"), "status": "skipped (name exists)"})
+        if wf.get("name") in tgt_names:
+            rows.append({"workflow": wf.get("name"), "status": "skipped (name exists)"})
             continue
         fresh = src_api.get_enrichment_workflow(wf.get("id")) or wf
-        remapped = [project_id_map[p] for p in (fresh.get("projectIds") or []) if p in project_id_map]
+        remapped = [project_map[p] for p in (fresh.get("projectIds") or []) if p in project_map]
         payload = {k: fresh.get(k) for k in ENRICHMENT_FIELDS if fresh.get(k) is not None}
         payload["projectIds"] = remapped
         created = tgt_api.create_enrichment_workflow(payload)
-        if created:
-            results["enrichment"].append({"workflow": payload["name"], "status": "✅ created", "new id": created.get("id")})
-        else:
-            results["enrichment"].append({"workflow": payload.get("name"), "status": f"❌ {tgt_api.last_error or 'failed'}"})
+        rows.append({
+            "workflow": payload.get("name"),
+            "projects bound": len(remapped),
+            "status": "✅ created" if created else f"❌ {tgt_api.last_error or 'failed'}",
+            "new id": created.get("id") if created else None,
+        })
+    return rows
 
-    # --- 4. Agents (fresh copies) then agentic workflows ---
-    agent_id_map = {}
+
+st.subheader("3) Composite enrichment workflows")
+if not project_map:
+    st.info("Copy the projects first — enrichment projectIds are remapped via the project id map.")
+elif not plan["enrichment"]:
+    st.caption("No enrichment workflows in this setup.")
+else:
+    if st.button("Copy composite enrichment", key="ootb_s_enrichment"):
+        with st.spinner("Copying enrichment workflows…"):
+            st.session_state["ootb_res_enrichment"] = _copy_enrichment(project_map)
+        st.rerun()
+    if st.session_state.get("ootb_res_enrichment") is not None:
+        _result_table(st.session_state["ootb_res_enrichment"])
+
+
+# ----- 4. Agents -----
+def _copy_agents():
+    agent_map, rows = {}, []
     for sid, full in plan["agents"].items():
         payload = _sanitize(full, AGENT_STRIP)
         if not payload.get("version"):
             payload.pop("version", None)
         created = tgt_api.create_agent(payload)
         if created:
-            agent_id_map[sid] = created.get("id")
-            results["agents"].append({"agent": full.get("name"), "version": full.get("version"), "status": "✅ created", "new id": created.get("id")})
+            agent_map[sid] = created.get("id")
+            rows.append({"agent": full.get("name"), "src version": full.get("version"),
+                         "new version": created.get("version"), "status": "✅ created", "new id": created.get("id")})
         else:
-            results["agents"].append({"agent": full.get("name"), "version": full.get("version"), "status": f"❌ {tgt_api.last_error or 'failed'}"})
+            rows.append({"agent": full.get("name"), "src version": full.get("version"),
+                         "new version": None, "status": f"❌ {tgt_api.last_error or 'failed'}", "new id": None})
+    return agent_map, rows
 
+
+st.subheader("4) Agents")
+st.caption(f"{len(plan['agents'])} agent(s) referenced by the setup's workflows will be copied fresh.")
+if st.button("Copy agents", key="ootb_s_agents", disabled=agents_blocked):
+    with st.spinner("Copying agents…"):
+        amap, rows = _copy_agents()
+    st.session_state["ootb_agent_map"] = amap
+    st.session_state["ootb_res_agents"] = rows
+    st.rerun()
+if st.session_state.get("ootb_res_agents") is not None:
+    _result_table(st.session_state["ootb_res_agents"])
+    st.caption(f"Agent id map: {len(st.session_state.get('ootb_agent_map', {}))} agent(s) mapped.")
+
+agent_map = st.session_state.get("ootb_agent_map")
+
+
+# ----- 5. Agentic workflows -----
+def _wf_agent_diag(wf, agent_map):
+    """Per-workflow: agent UUIDs found in workflowConfiguration and whether they were copied."""
+    config = wf.get("workflowConfiguration") or {}
+    config_uuids = _find_uuids(config)
+    idx = {a["id"]: a for a in plan.get("src_agent_index", []) if a.get("id")}
+    known, unknown = [], []
+    for u in sorted(config_uuids):
+        if u in idx:
+            a = idx[u]
+            known.append({
+                "agent": a.get("name"), "version": a.get("version"), "source id": u,
+                "copied?": ("✅ " + str(agent_map.get(u))) if u in agent_map else "❌ NOT COPIED",
+            })
+        else:
+            unknown.append(u)
+    return known, unknown
+
+
+def _copy_workflows(project_map, agent_map):
+    rows = []
     for wf in plan["workflows"]:
         body = _sanitize(wf, WORKFLOW_STRIP)
-        if agent_id_map:
-            body["workflowConfiguration"] = _rewrite_uuids(body.get("workflowConfiguration") or {}, agent_id_map)
+        if agent_map:
+            body["workflowConfiguration"] = _rewrite_uuids(body.get("workflowConfiguration") or {}, agent_map)
         if "projects" in body:
-            body["projects"] = _remap_project_ref(body.get("projects"), project_id_map)
+            body["projects"] = _remap_project_ref(body.get("projects"), project_map or {})
         if "trainingProjects" in body:
-            body["trainingProjects"] = _remap_project_ref(body.get("trainingProjects"), project_id_map)
+            body["trainingProjects"] = _remap_project_ref(body.get("trainingProjects"), project_map or {})
         if body.get("trainingCompanyId"):
             body["trainingCompanyId"] = tgt_company.get("id")
         created = tgt_api.create_agent_workflow(body)
-        if created:
-            results["workflows"].append({"workflow": wf.get("name"), "status": "✅ created", "new id": created.get("id")})
-        else:
-            results["workflows"].append({"workflow": wf.get("name"), "status": f"❌ {tgt_api.last_error or 'failed'}"})
+        rows.append({
+            "workflow": wf.get("name"),
+            "status": "✅ created" if created else f"❌ {tgt_api.last_error or 'failed'}",
+            "new id": created.get("id") if created else None,
+        })
+    return rows
 
-    return results
 
+st.subheader("5) Agentic workflows")
+if not agent_map:
+    st.info("Copy the agents first (step 4) — workflow agent references are remapped via the agent id map.")
+elif not plan["workflows"]:
+    st.caption("No agentic workflows in this setup.")
+else:
+    with st.expander("Agent-reference check (why a workflow can fail)", expanded=True):
+        any_unmapped = False
+        for wf in plan["workflows"]:
+            known, unknown = _wf_agent_diag(wf, agent_map)
+            st.markdown(f"**{wf.get('name')}** — {len(known)} known agent reference(s), {len(unknown)} other UUID(s) in config")
+            if known:
+                _result_table(known)
+                if any("NOT COPIED" in str(r["copied?"]) for r in known):
+                    any_unmapped = True
+            if unknown:
+                st.caption(
+                    f"{len(unknown)} UUID(s) in the config are not in the template agent list. These are "
+                    "usually workflow node ids, but if the API reports one as a missing agent it means the "
+                    "workflow references an agent that `/agents` does not return (e.g. a global/OOTB agent). "
+                    "Sample: " + ", ".join(f"`{u}`" for u in unknown[:8])
+                )
+        if any_unmapped:
+            st.error(
+                "Some referenced agents were NOT copied — creating the workflow will fail with "
+                "'agent not found'. Re-run step 4, or investigate the pre-flight resolution."
+            )
 
-if not model_id:
-    st.warning("The selected target project has no extraction model id. Pick a different target project in Step 2.")
-    deploy_blocked = True
-
-deploy_clicked = st.button(
-    "Deploy setup to target company",
-    type="primary",
-    key="ootb_deploy",
-    disabled=deploy_blocked,
-)
-
-if deploy_clicked and not deploy_blocked:
-    with st.status("Deploying…", expanded=True) as status:
-        st.write("Cloning projects, routings, enrichment and agentic workflows…")
-        st.session_state["ootb_results"] = _deploy()
-        status.update(label="Deploy finished", state="complete")
-    st.rerun()
-
-results = st.session_state.get("ootb_results")
-if results:
-    st.subheader("Result")
-    any_fail = False
-    for title, key in [
-        ("Projects", "projects"),
-        ("Routing rules", "routings"),
-        ("Composite enrichment workflows", "enrichment"),
-        ("Agents", "agents"),
-        ("Agentic workflows", "workflows"),
-    ]:
-        rows = results.get(key) or []
-        st.markdown(f"**{title}** ({len(rows)})")
-        if rows:
-            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-            any_fail = any_fail or any(str(r.get("status", "")).startswith("❌") for r in rows)
-        else:
-            st.caption("_none_")
-    if any_fail:
-        st.error("Some artefacts failed — see the ❌ rows above. Successful ones were still created.")
-    else:
-        st.success("✅ Deploy completed successfully.")
+    if st.button("Copy agentic workflows", key="ootb_s_workflows", disabled=agents_blocked):
+        with st.spinner("Creating agentic workflows…"):
+            st.session_state["ootb_res_workflows"] = _copy_workflows(project_map, agent_map)
+        st.rerun()
+    if st.session_state.get("ootb_res_workflows") is not None:
+        rows = st.session_state["ootb_res_workflows"]
+        _result_table(rows)
+        for r in rows:
+            if str(r.get("status", "")).startswith("❌"):
+                st.error(f"**{r['workflow']}** failed — full API response:")
+                st.code(str(r["status"])[2:].strip(), language="text")
