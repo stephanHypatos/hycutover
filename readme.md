@@ -36,6 +36,10 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
   and download a ZIP of Markdown files documenting their configuration: the
   composite enrichment workflow(s), the dynamic agent workflow(s), one file per
   referenced agent (name, system prompt, user prompt) and the routing rules.
+- **Deploy new OOTB setup** — clone a complete out-of-the-box setup (its
+  projects, routing rules, composite enrichment workflows and agentic workflows
+  with their agents) from the template company into a target company in one
+  click. See [Guide: Deploy new OOTB Setup](#guide-deploy-new-ootb-setup).
 - **File batch processing** — upload files and trigger batch processing.
 - **Copy documents** — replay documents from one project into another.
 - **Polling** — inspect long-running operations.
@@ -54,6 +58,9 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
      Compare Composite Enrichment Workflows pages)
    - `agents.read`, `enrichment-workflows.read`, `routings.read` (Export
      Configuration as Markdown page)
+   - `projects.read/write`, `routings.read/write`, `agents.read/write`,
+     `enrichment-workflows.read/write`, `companies.read` (Deploy new OOTB Setup —
+     read on the template company, write on the target company)
 
 Read more:
 <https://docs-internal.hypatos.ai/implementation-playbook/introduction-to-implementation-playbook/implementation-playbook/create-or-update-keycloak-credentials>
@@ -182,6 +189,67 @@ still go through, and the result table tells you which was which.
 | `❌ HTTP 403` when applying | The credentials are missing `projects.write`. |
 | `❌ HTTP 422` when applying | The API rejected the member list — most often an empty list, or a user id that has no access to this company. |
 | A user you expect is not selectable | Turn off **Only show users with access to this company** in Step 2, or check the user's company access in the Hypatos UI. |
+
+## Guide: Deploy new OOTB Setup
+
+This page clones a complete **out-of-the-box (OOTB) setup** — its projects,
+routing rules, composite enrichment workflows and agentic workflows (with their
+agents) — from the fixed **template company** into a **target company**. It is
+the template-clone flow of *Clone Projects*, extended to also carry routings,
+enrichment and agent workflows.
+
+### Configuring the setups
+
+Each OOTB setup is a named list of **template-company project ids**, stored in
+`.streamlit/secrets.toml`:
+
+```toml
+[ootb]
+source_region = "EU"   # region the template company lives in
+
+[ootb.setups.invoice_processing_a]
+label       = "Invoice Processing — Setup A"
+group       = "Invoice Processing"   # options with the same group share a category
+project_ids = ["<template-project-id-1>", "<template-project-id-2>"]
+
+[ootb.setups.order_confirmation]
+label       = "Order Confirmation"
+group       = "Order Confirmation"
+project_ids = ["..."]
+```
+
+The template company's own credentials are the existing `CLIENT_ID` /
+`CLIENT_SECRET` in the same file. `group` controls the two-level menu, so
+*Invoice Processing* can offer Setup A / Setup B while the others are single
+options.
+
+### Steps
+
+1. **Credentials** — the template (source) credentials come from secrets; enter
+   the target `client_id` / `client_secret` and region, then authenticate. The
+   target must be a different company from the template.
+2. **Target project defaults** — load the target projects and pick one to supply
+   the extraction **model id** applied to every cloned project. Optionally set a
+   name **prefix** / **suffix**.
+3. **Choose the OOTB setup** — pick a category, then a setup.
+4. **Pre-flight check** — reads both companies (no writes) and shows the deploy
+   plan: how many projects, enrichment workflows, agentic workflows and agents
+   will be created. It also checks the target for **agent name/version
+   collisions**; if any exist the deploy is **blocked** until you remove or
+   rename them in the target and re-run the check. Enrichment workflows whose
+   name already exists in the target are flagged and will be **skipped**.
+5. **Deploy** — clones, in order, projects → routing rules → enrichment
+   workflows → agents → agentic workflows, remapping project ids and agent
+   references to the newly created target ids. A per-artefact result table shows
+   what was created, skipped or failed; a failure of one artefact does not stop
+   the others.
+
+### Notes
+
+- Agents are copied as **fresh** custom agents (OOTB / provenance fields
+  stripped). The pre-flight collision check is what prevents duplicates.
+- Cloned projects are created open to all company users (`members: all`); adjust
+  access afterwards with **Manage Project Users** if needed.
 
 ## Tech stack
 
