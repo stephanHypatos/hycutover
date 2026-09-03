@@ -187,8 +187,34 @@ mode = st.radio(
 target_company_id = tgt_company.get("id")
 
 
+# Always-available base model to fall back to when the agent's own model is not
+# active in the target company (create_agent -> 422 "Model is not active ...").
+BASE_MODEL_ID = "3548e0ca-e5e4-4c1a-8ca2-a0878036053e"
+
+
+def _is_model_inactive(err: str) -> bool:
+    """True when create_agent failed because the agent's model is not active in the target."""
+    if not err:
+        return False
+    e = err.lower()
+    return "422" in e and "model" in e and "not active" in e
+
+
+def _set_model(payload: dict, model_id: str):
+    matched = False
+    for key in ("model", "modelId"):
+        if key in payload:
+            payload[key] = model_id
+            matched = True
+    if not matched:
+        payload["model"] = model_id
+
+
 def _post_agent(agent_body: dict, override_name: str = None, override_version: str = None):
-    """Sanitize + POST an agent to the target company. Returns (created_agent, error_str)."""
+    """Sanitize + POST an agent to the target company.
+    Returns (created_agent, error_str, payload, note). On a 422 'model not active'
+    error the agent's model is swapped for BASE_MODEL_ID and the create is retried,
+    so one dead model reference does not break the whole copy."""
     payload = _sanitize(agent_body, AGENT_STRIP)
     if override_name is not None:
         payload["name"] = override_name
@@ -198,7 +224,14 @@ def _post_agent(agent_body: dict, override_name: str = None, override_version: s
     if not payload.get("version"):
         payload.pop("version", None)
     created = tgt_api.create_agent(payload)
-    return created, (tgt_api.last_error if created is None else None), payload
+    note = None
+    if created is None and _is_model_inactive(tgt_api.last_error):
+        _set_model(payload, BASE_MODEL_ID)
+        retried = tgt_api.create_agent(payload)
+        if retried is not None:
+            created = retried
+            note = f"model not active in target — reassigned to base model {BASE_MODEL_ID}"
+    return created, (tgt_api.last_error if created is None else None), payload, note
 
 
 def _post_workflow(workflow_body: dict, override_name: str = None, drop_projects: bool = False):
@@ -387,12 +420,12 @@ if mode.startswith("Agent Workflow"):
                     })
                     progress.progress((i + 1) / len(copy_choices))
                     continue
-                created, err, payload = _post_agent(full)
+                created, err, payload, note = _post_agent(full)
                 if created:
                     agent_id_map[sid] = created.get("id")
                     results.append({
                         "kind": "agent", "name": r["name"], "version": r["version"],
-                        "status": "OK",
+                        "status": "OK" + (f" — {note}" if note else ""),
                         "payload": payload, "response": created,
                     })
                 else:
@@ -449,12 +482,12 @@ if mode.startswith("Agent Workflow"):
             f"Completed with {len(failed)} failure(s) / {len(results) - len(failed)} success(es)."
         )
         for r in results:
-            icon = "✅" if r["status"] == "OK" else "❌"
+            icon = "✅" if r["status"].startswith("OK") else "❌"
             with st.expander(
                 f"{icon} [{r['kind']}] {r['name']} — {r['status']}",
-                expanded=r["status"] != "OK",
+                expanded=not r["status"].startswith("OK"),
             ):
-                if r["status"] != "OK":
+                if not r["status"].startswith("OK"):
                     st.write("**Error (full API response):**")
                     st.code(r["status"], language="text")
                 if r["payload"] is not None:
@@ -552,11 +585,11 @@ else:
                 override_name = None
                 if suffix:
                     override_name = f"{full.get('name', '')}{suffix}"
-                created, err, payload = _post_agent(full, override_name=override_name)
+                created, err, payload, note = _post_agent(full, override_name=override_name)
                 if created:
                     results.append({
                         "name": payload.get("name"), "version": payload.get("version", "-"),
-                        "status": "OK",
+                        "status": "OK" + (f" — {note}" if note else ""),
                         "payload": payload, "response": created,
                     })
                 else:
@@ -577,10 +610,10 @@ else:
             f"Completed with {len(failed)} failure(s) / {len(results) - len(failed)} success(es)."
         )
         for r in results:
-            icon = "✅" if r["status"] == "OK" else "❌"
+            icon = "✅" if r["status"].startswith("OK") else "❌"
             with st.expander(
                 f"{icon} {r['name']} v{r['version']} — {r['status']}",
-                expanded=r["status"] != "OK",
+                expanded=not r["status"].startswith("OK"),
             ):
                 if r["payload"] is not None:
                     st.write("**Payload sent:**")
