@@ -33,9 +33,10 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
   bindings (`projectIds`) are excluded, since the ids are unique per company and
   always differ. Purpose-built for spotting prod-vs-test drift.
 - **Export configuration as Markdown** — pick a company and a set of projects
-  and download a ZIP of Markdown files documenting their configuration: the
-  composite enrichment workflow(s), the dynamic agent workflow(s), one file per
-  referenced agent (name, system prompt, user prompt) and the routing rules.
+  and download a ZIP of Markdown files documenting their configuration: each
+  project's schema and config, the composite enrichment workflow(s), the dynamic
+  agent workflow(s), one file per referenced agent (name, system prompt, user
+  prompt) and the routing rules.
 - **Deploy new OOTB setup** — clone a complete out-of-the-box setup (its
   projects, routing rules, composite enrichment workflows and agentic workflows
   with their agents) from the template company into a target company in one

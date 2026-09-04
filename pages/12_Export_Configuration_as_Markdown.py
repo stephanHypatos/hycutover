@@ -12,9 +12,9 @@ from config import BASE_URL_EU, BASE_URL_US
 st.set_page_config(page_title="Export Configuration as Markdown", layout="wide")
 st.title("Export Configuration as Markdown")
 st.caption(
-    "Fetch a company's configuration for a set of projects — composite enrichment "
-    "workflows, the dynamic agent workflow with all its agents, and routing rules — and "
-    "download it as a bundle of Markdown files (one per artefact)."
+    "Fetch a company's configuration for a set of projects — the project schema and config, "
+    "composite enrichment workflows, the dynamic agent workflow with all its agents, and "
+    "routing rules — and download it as a bundle of Markdown files (one per artefact)."
 )
 
 
@@ -173,7 +173,15 @@ selected_ids = {pid for pid, _ in selected}
 st.header("Step 3: Fetch configuration")
 
 if st.button("Fetch configuration for the selected projects", type="primary", key="exp_fetch"):
-    with st.spinner("Fetching enrichment workflows, agent workflows, agents and routing rules…"):
+    with st.spinner("Fetching project schemas, enrichment workflows, agent workflows, agents and routing rules…"):
+        # Project detail + schema for each selected project.
+        project_configs = {}
+        for pid in selected_ids:
+            project_configs[pid] = {
+                "detail": api.get_project_by_id(pid),
+                "schema": api.get_project_schema(pid),
+            }
+
         # Composite enrichment workflows bound to the selected projects.
         all_enrichment = api.list_enrichment_workflows()
         enrichment = [
@@ -216,6 +224,7 @@ if st.button("Fetch configuration for the selected projects", type="primary", ke
                 routing_rules.append(rule)
 
     st.session_state["exp_fetched"] = {
+        "projects": project_configs,
         "enrichment": enrichment,
         "workflows": list(workflow_details.values()),
         "agents": list(agent_details.values()),
@@ -227,6 +236,7 @@ fetched = st.session_state.get("exp_fetched")
 if not fetched:
     st.stop()
 
+project_configs = fetched.get("projects", {})
 enrichment = fetched["enrichment"]
 workflows = fetched["workflows"]
 agents = fetched["agents"]
@@ -235,6 +245,7 @@ routing_rules = fetched["routing_rules"]
 st.dataframe(
     pd.DataFrame(
         [
+            {"artefact": "Projects (schema + config)", "count": len(project_configs)},
             {"artefact": "Composite enrichment workflows", "count": len(enrichment)},
             {"artefact": "Dynamic (agent) workflows", "count": len(workflows)},
             {"artefact": "Agents", "count": len(agents)},
@@ -245,7 +256,7 @@ st.dataframe(
     hide_index=True,
 )
 
-if not any([enrichment, workflows, agents, routing_rules]):
+if not any([project_configs, enrichment, workflows, agents, routing_rules]):
     st.warning("Nothing was found for the selected projects.")
     st.stop()
 
@@ -259,6 +270,38 @@ def _project_list_md(project_ids) -> str:
     return "\n".join(
         f"- {project_names.get(pid, '(unknown project)')} (`{pid}`)" for pid in project_ids
     )
+
+
+def _project_md(pid: str, name: str, detail: dict, schema) -> str:
+    detail = detail or {}
+    config = {
+        "id": pid,
+        "name": detail.get("name", name),
+        "extractionModelId": detail.get("extractionModelId"),
+        "completion": detail.get("completion"),
+        "duplicates": detail.get("duplicates"),
+        "retentionDays": detail.get("retentionDays"),
+        "note": detail.get("note"),
+        "ocr": detail.get("ocr"),
+        "members": detail.get("members"),
+    }
+    lines = [
+        f"# Project: {detail.get('name', name)}",
+        "",
+        f"- **id:** `{pid}`",
+        f"- **extractionModelId:** `{detail.get('extractionModelId', '?')}`",
+        "",
+        "## Configuration",
+        "",
+        _fence(json.dumps(config, indent=2, ensure_ascii=False), "json"),
+        "",
+        "## Schema",
+        "",
+        _fence(json.dumps(schema if schema is not None else {}, indent=2, ensure_ascii=False), "json")
+        if schema is not None else "_schema could not be fetched_",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _enrichment_md(w: dict) -> str:
@@ -378,6 +421,7 @@ def _index_md() -> str:
         "",
         "## Contents",
         "",
+        f"- `projects/` — {len(project_configs)} project(s) (schema + config)",
         f"- `enrichment/` — {len(enrichment)} composite enrichment workflow(s)",
         f"- `workflows/` — {len(workflows)} dynamic (agent) workflow(s)",
         f"- `agents/` — {len(agents)} agent(s)",
@@ -399,6 +443,11 @@ def _unique_name(base: str, used: set) -> str:
 
 def _build_files() -> dict:
     files = {"README.md": _index_md()}
+    used = set()
+    for pid, name in selected:
+        pc = project_configs.get(pid, {})
+        slug = _unique_name(_slug(name, "project"), used)
+        files[f"projects/{slug}.md"] = _project_md(pid, name, pc.get("detail"), pc.get("schema"))
     used = set()
     for w in enrichment:
         slug = _unique_name(_slug(w.get("name"), "enrichment"), used)
