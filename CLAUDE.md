@@ -48,10 +48,11 @@ pages/
                                          # workflow definitions (name, description, YAML
                                          # definition). projectIds are excluded from the
                                          # comparison (company-specific). Prod-vs-test drift.
-  12_Export_Configuration_as_Markdown.py # Pick a company + projects, fetch their composite
-                                         # enrichment workflows, dynamic agent workflows,
-                                         # referenced agents and routing rules, and download a
-                                         # ZIP of one Markdown file per artefact.
+  12_Export_Configuration_as_Markdown.py # Pick a company + projects, fetch their project
+                                         # schema + config, composite enrichment workflows,
+                                         # dynamic agent workflows, referenced agents and routing
+                                         # rules, and download a ZIP of one Markdown file per
+                                         # artefact.
   13_Deploy_OOTB_Setup.py                # One-click clone of a pre-defined OOTB setup (projects,
                                          # routings, composite enrichment, agentic workflows +
                                          # agents) from the template company (secrets creds) to a
@@ -116,8 +117,9 @@ streamlit run Home.py
   and the compare page excludes them from the comparison entirely (shown per
   side for reference only).
 - The Export Configuration page (`exp_*`) links projects to artefacts by their
-  native binding: enrichment workflows via `projectIds`, agent workflows via
-  `list_agent_workflows(project_id=...)`, referenced agents via UUID +
+  native binding: each project's schema (`get_project_schema`) + config
+  (`get_project_by_id`), enrichment workflows via `projectIds`, agent workflows
+  via `list_agent_workflows(project_id=...)`, referenced agents via UUID +
   `name:version` scan of `workflowConfiguration`, and routing rules via
   `fromProjectId` / `toProjectId`. It renders one Markdown file per artefact
   and zips them in memory (`zipfile` + `io.BytesIO`) for `st.download_button`.
