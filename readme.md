@@ -41,6 +41,13 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
   projects, routing rules, composite enrichment workflows and agentic workflows
   with their agents) from the template company into a target company in one
   click. See [Guide: Deploy new OOTB Setup](#guide-deploy-new-ootb-setup).
+- **Bulk upload & process** — drop in a whole folder of documents and let the
+  app upload them and request processing in **app-driven batches**: it uploads a
+  batch, requests processing into documents, waits until every document in the
+  batch has settled, then moves to the next batch — so neither Streamlit's memory
+  nor the Hypatos API is overwhelmed by 800 files at once. Live per-file status
+  (pending / processing / done / failed with the exact document state), and it is
+  resumable — a rerun continues where it left off and failed files are retried.
 - **File batch processing** — upload files and trigger batch processing.
 - **Copy documents** — replay documents from one project into another.
 - **Polling** — inspect long-running operations.
@@ -62,6 +69,8 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
    - `projects.read/write`, `routings.read/write`, `agents.read/write`,
      `enrichment-workflows.read/write`, `companies.read` (Deploy new OOTB Setup —
      read on the template company, write on the target company)
+   - `files.write`, `documents.read`, `documents.write` (Bulk Upload & Process —
+     plus `projects.read`, `companies.read`)
 
 Read more:
 <https://docs-internal.hypatos.ai/implementation-playbook/introduction-to-implementation-playbook/implementation-playbook/create-or-update-keycloak-credentials>

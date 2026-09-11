@@ -434,6 +434,60 @@ class HypatosAPI:
             print(f"Unexpected error while processing file batch: {err}")
         return None
 
+    def list_documents(self, project_id: str = None, states: list = None,
+                       file_id: str = None, limit: int = 50, offset: int = 0):
+        """
+        Retrieves a page of documents via GET /documents. Optional filters:
+        project_id, states (list of DocumentState), file_id. Returns the raw
+        response dict ({'data', 'limit', 'offset', 'totalCount'}) or None.
+        """
+        url = f"{self.base_url}/documents"
+        headers = self.get_headers()
+        params = {"limit": limit, "offset": offset}
+        if project_id:
+            params["projectId"] = project_id
+        if states:
+            params["state"] = states
+        if file_id:
+            params["fileId"] = file_id
+        try:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while listing documents: {self.last_error}")
+        except Exception as err:
+            self.last_error = str(err)
+            print(f"Unexpected error while listing documents: {err}")
+        return None
+
+    def process_file_into_document(self, file_id: str, project_id: str,
+                                   external_id: str = None, external_data: dict = None):
+        """
+        Requests processing of a previously uploaded file into a document via
+        POST /documents/process-file. Returns the response dict (contains
+        'documentId', 'fileId', 'projectId') on success, or None on failure.
+        """
+        url = f"{self.base_url}/documents/process-file"
+        headers = self.get_headers()
+        payload = {"fileId": file_id, "projectId": project_id}
+        if external_id:
+            payload["externalId"] = external_id
+        if external_data:
+            payload["externalData"] = external_data
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            return response.json() if response.content else {}
+        except requests.HTTPError as http_err:
+            self.last_error = f"HTTP {http_err.response.status_code}: {http_err.response.text}"
+            print(f"HTTP error while processing file into document: {self.last_error}")
+        except Exception as err:
+            self.last_error = str(err)
+            print(f"Unexpected error while processing file into document: {err}")
+        return None
+
     # ------------------------------------------------------------------
     # Agent management (/agents, /agent-workflows)
     # ------------------------------------------------------------------

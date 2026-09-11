@@ -35,6 +35,11 @@ pages/
                                          # definitions (YAML) via /enrichment-workflows on the
                                          # main v2 API. Conflict handling + projectIds re-mapping.
   6_File_Batch.py                        # Upload files and trigger batch processing
+  14_Bulk_Upload_and_Process.py          # Upload a folder of documents and process them into
+                                         # documents in app-driven batches: upload -> process-file
+                                         # -> poll states until each batch settles, then the next.
+                                         # Live per-file status; resumable. Uses POST /files,
+                                         # POST /documents/process-file, GET /documents.
   7_Copy_Documents.py                    # Replay documents from one project into another
   8_Polling.py                           # Inspect long-running operations
   9_Compare_Agents_and_Workflows.py      # Side-by-side diff of two agents, OR two workflows plus
@@ -69,7 +74,9 @@ requirements.txt
 - Key endpoints: `/projects`, `/projects/{id}`, `/projects/{id}/schema`,
   `/routings`, `/agents`, `/agents/{id}`, `/agent-workflows`,
   `/agent-workflows/{id}`, `/users`, `/users/{id}`,
-  `/enrichment-workflows`, `/enrichment-workflows/{id}`
+  `/enrichment-workflows`, `/enrichment-workflows/{id}`,
+  `/files`, `/documents`, `/documents/{id}`, `/documents/process-file`,
+  `/cases/process-file-batch`
 - All REST API methods live in `auth.py` → `HypatosAPI` class
 - `setup_api.py` → `SetupAPI` covers the cookie-authenticated
   `setup.cloud.hypatos.ai` API. It is now legacy: the composite enrichment
@@ -125,6 +132,22 @@ streamlit run Home.py
   and zips them in memory (`zipfile` + `io.BytesIO`) for `st.download_button`.
   Prompts/definitions are wrapped in a code fence sized longer than any backtick
   run they contain (`_fence`).
+- The Bulk Upload & Process page (`bup_*`) uploads a whole folder and processes
+  it in app-driven batches so neither Streamlit memory nor the API is
+  overwhelmed. Per batch of `batch_size` (default 50): upload each file
+  (`upload_file` → `POST /files`), request processing
+  (`process_file_into_document` → `POST /documents/process-file`), then poll
+  until every document leaves `new`/`processing`. Polling is bulk: one/two
+  `list_documents(states=["new","processing"])` calls per round match by
+  documentId, and only a newly-settled doc costs a `get_document_by_id` for its
+  final state; a doc reported settled but not yet indexed is re-confirmed and
+  kept pending. Per-file tracking lives in `st.session_state["bup_items"]`
+  (rebuilt when the selection changes), so a rerun resumes and finished files
+  are not redone; failed files are retried on the next Start. File bytes are
+  read just-in-time via `UploadedFile.getvalue()` and dropped — the app keeps no
+  second copy. `.streamlit/config.toml` raises `maxUploadSize`/`maxMessageSize`
+  (defaults 200 MB) so large folders are accepted. Terminal states other than
+  `failed`/`rejected` count as done; the exact `state` is always shown.
 - The Deploy OOTB Setup page (`ootb_*`) is the template-clone flow extended to
   routings + enrichment + agent workflows. Each setup in
   `st.secrets["ootb"]["setups"]` (with a `DEFAULT_SETUPS` fallback shape) names
@@ -156,3 +179,5 @@ streamlit run Home.py
 - `projects.read/write`, `routings.read/write`, `agents.read/write`,
   `enrichment-workflows.read/write`, `companies.read` (Deploy new OOTB Setup —
   read on the template, write on the target)
+- `files.write`, `documents.read`, `documents.write` (Bulk Upload & Process —
+  in addition to `projects.read`, `companies.read`)

@@ -1,0 +1,8 @@
+[server]
+# Bulk Upload & Process needs to accept large sets of documents. maxUploadSize
+# is per-file in MB; maxMessageSize caps the websocket payload that carries the
+# uploaded bytes to the server. Both default to 200 MB, which rejects large
+# folders — raise them here. Note: every selected file is held in server memory
+# at once, so keep an eye on RAM for very large sets.
+maxUploadSize = 3000
+maxMessageSize = 3000
