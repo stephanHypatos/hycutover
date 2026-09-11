@@ -42,12 +42,14 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
   with their agents) from the template company into a target company in one
   click. See [Guide: Deploy new OOTB Setup](#guide-deploy-new-ootb-setup).
 - **Bulk upload & process** — drop in a whole folder of documents and let the
-  app upload them and request processing in **app-driven batches**: it uploads a
-  batch, requests processing into documents, waits until every document in the
-  batch has settled, then moves to the next batch — so neither Streamlit's memory
-  nor the Hypatos API is overwhelmed by 800 files at once. Live per-file status
-  (pending / processing / done / failed with the exact document state), and it is
-  resumable — a rerun continues where it left off and failed files are retried.
+  app upload them and request processing in **app-driven batches** — so neither
+  Streamlit's memory nor the Hypatos API is overwhelmed by hundreds of files at
+  once. Two speed modes: *submit everything then track* (fastest for large sets —
+  the async processing wait is paid once) or *wait for each batch* (caps how many
+  documents process at once). Live per-file status (pending / processing / done /
+  failed with the exact document state), and it is resumable — a rerun continues
+  where it left off and failed files are retried. An in-page guide explains the
+  long-running behaviour (keep the tab open, don't let the machine sleep).
 - **File batch processing** — upload files and trigger batch processing.
 - **Copy documents** — replay documents from one project into another.
 - **Polling** — inspect long-running operations.
