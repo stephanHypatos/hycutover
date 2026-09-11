@@ -114,8 +114,95 @@ def _render_status(items, count_ph, table_ph, progress_ph):
 
 # --- The batch run ---------------------------------------------------------
 
+def _submit_batch(auth, project_id, items, uploaded_by_index, batch,
+                  count_ph, table_ph, progress_ph):
+    """Upload + request processing for one batch of item indexes."""
+    # 1) Upload any file that does not yet have a file id.
+    for idx in batch:
+        it = items[idx]
+        if it.get("file_id"):
+            continue
+        f = uploaded_by_index[idx]
+        data = f.getvalue()
+        result = auth.upload_file(data, _content_type(it["name"]), it["name"])
+        del data
+        if result and result.get("id"):
+            it["file_id"] = result["id"]
+            it["status"] = "uploaded"
+            it["error"] = None
+        else:
+            it["status"] = "failed"
+            it["error"] = f"upload failed: {auth.last_error or 'unknown error'}"
+        _render_status(items, count_ph, table_ph, progress_ph)
+
+    # 2) Request processing into a document for every uploaded file.
+    for idx in batch:
+        it = items[idx]
+        if it["status"] == "failed" or it.get("document_id"):
+            continue
+        if not it.get("file_id"):
+            continue
+        result = auth.process_file_into_document(it["file_id"], project_id)
+        if result and result.get("documentId"):
+            it["document_id"] = result["documentId"]
+            it["status"] = "processing"
+            it["state"] = "new"
+            it["error"] = None
+        else:
+            it["status"] = "failed"
+            it["error"] = f"process-file failed: {auth.last_error or 'unknown error'}"
+        _render_status(items, count_ph, table_ph, progress_ph)
+
+
+def _poll_until_settled(auth, project_id, items, idxs, interval, timeout,
+                        count_ph, table_ph, progress_ph, log_ph, label):
+    """
+    Poll the given item indexes until every processing document settles or we
+    hit `timeout` seconds. Returns True if all settled, False on timeout.
+    """
+    pending = {items[idx]["document_id"]: idx for idx in idxs
+               if items[idx]["status"] == "processing" and items[idx].get("document_id")}
+    deadline = time.time() + timeout
+    while pending:
+        if time.time() > deadline:
+            log_ph.warning(
+                f"{label}: timed out after {timeout}s with {len(pending)} "
+                f"document(s) still processing. They keep their 'processing' "
+                f"status — click Start again to keep waiting (no re-upload)."
+            )
+            return False
+        remaining = int(deadline - time.time())
+        log_ph.info(f"{label}: {len(pending)} document(s) still processing "
+                    f"(waiting, up to {remaining}s left)…")
+        time.sleep(interval)
+
+        in_progress = _fetch_in_progress(auth, project_id, set(pending.keys()))
+        for doc_id in list(pending.keys()):
+            idx = pending[doc_id]
+            it = items[idx]
+            if doc_id in in_progress:
+                it["state"] = in_progress[doc_id] or it.get("state")
+                continue
+            # Not in the in-progress page any more → confirm final state.
+            doc = auth.get_document_by_id(doc_id)
+            state = (doc or {}).get("state")
+            if state in _IN_PROGRESS_STATES:
+                it["state"] = state  # not indexed yet / transient — keep waiting
+                continue
+            it["state"] = state or "unknown"
+            if state in _FAILED_STATES:
+                it["status"] = "failed"
+                it["error"] = f"document state: {state}"
+            else:
+                it["status"] = "done"
+                it["error"] = None
+            del pending[doc_id]
+        _render_status(items, count_ph, table_ph, progress_ph)
+    return True
+
+
 def _run(auth, project_id, items, uploaded_by_index, batch_size, interval, timeout,
-         count_ph, table_ph, progress_ph, log_ph):
+         wait_per_batch, count_ph, table_ph, progress_ph, log_ph):
     # Work on everything that is not already finished; this makes the run
     # resumable and lets failed files be retried on a later click.
     todo = [i for i, it in enumerate(items) if it["status"] != "done"]
@@ -123,87 +210,25 @@ def _run(auth, project_id, items, uploaded_by_index, batch_size, interval, timeo
         log_ph.info("Nothing to do — every file is already done.")
         return
 
+    total_batches = (len(todo) + batch_size - 1) // batch_size
     for start in range(0, len(todo), batch_size):
         batch = todo[start:start + batch_size]
         batch_no = start // batch_size + 1
-        total_batches = (len(todo) + batch_size - 1) // batch_size
-        log_ph.info(f"Batch {batch_no}/{total_batches}: {len(batch)} file(s)")
+        log_ph.info(f"Batch {batch_no}/{total_batches}: uploading & submitting {len(batch)} file(s)…")
+        _submit_batch(auth, project_id, items, uploaded_by_index, batch,
+                      count_ph, table_ph, progress_ph)
+        if wait_per_batch:
+            _poll_until_settled(auth, project_id, items, batch, interval, timeout,
+                                count_ph, table_ph, progress_ph, log_ph,
+                                f"Batch {batch_no}/{total_batches}")
 
-        # 1) Upload any file that does not yet have a file id.
-        for idx in batch:
-            it = items[idx]
-            if it.get("file_id"):
-                continue
-            f = uploaded_by_index[idx]
-            data = f.getvalue()
-            result = auth.upload_file(data, _content_type(it["name"]), it["name"])
-            del data
-            if result and result.get("id"):
-                it["file_id"] = result["id"]
-                it["status"] = "uploaded"
-                it["error"] = None
-            else:
-                it["status"] = "failed"
-                it["error"] = f"upload failed: {auth.last_error or 'unknown error'}"
-            _render_status(items, count_ph, table_ph, progress_ph)
-
-        # 2) Request processing into a document for every uploaded file.
-        for idx in batch:
-            it = items[idx]
-            if it["status"] == "failed" or it.get("document_id"):
-                continue
-            if not it.get("file_id"):
-                continue
-            result = auth.process_file_into_document(it["file_id"], project_id)
-            if result and result.get("documentId"):
-                it["document_id"] = result["documentId"]
-                it["status"] = "processing"
-                it["state"] = "new"
-                it["error"] = None
-            else:
-                it["status"] = "failed"
-                it["error"] = f"process-file failed: {auth.last_error or 'unknown error'}"
-            _render_status(items, count_ph, table_ph, progress_ph)
-
-        # 3) Poll until every document in this batch has settled (or we time out).
-        pending = {it["document_id"]: idx for idx in batch
-                   for it in [items[idx]]
-                   if it["status"] == "processing" and it.get("document_id")}
-        deadline = time.time() + timeout
-        while pending:
-            if time.time() > deadline:
-                log_ph.warning(
-                    f"Batch {batch_no}: timed out after {timeout}s with "
-                    f"{len(pending)} document(s) still processing. They keep their "
-                    f"'processing' status — click Start again to keep waiting."
-                )
-                break
-            time.sleep(interval)
-
-            in_progress = _fetch_in_progress(auth, project_id, set(pending.keys()))
-
-            for doc_id in list(pending.keys()):
-                idx = pending[doc_id]
-                it = items[idx]
-                if doc_id in in_progress:
-                    it["state"] = in_progress[doc_id] or it.get("state")
-                    continue
-                # Not in the in-progress page any more → confirm final state.
-                doc = auth.get_document_by_id(doc_id)
-                state = (doc or {}).get("state")
-                if state in _IN_PROGRESS_STATES:
-                    # Not indexed yet / transient — keep waiting.
-                    it["state"] = state
-                    continue
-                it["state"] = state or "unknown"
-                if state in _FAILED_STATES:
-                    it["status"] = "failed"
-                    it["error"] = f"document state: {state}"
-                else:
-                    it["status"] = "done"
-                    it["error"] = None
-                del pending[doc_id]
-            _render_status(items, count_ph, table_ph, progress_ph)
+    if not wait_per_batch:
+        # Everything is submitted — now wait for all of it at once.
+        processing = [i for i, it in enumerate(items) if it["status"] == "processing"]
+        if processing:
+            log_ph.info(f"All files submitted — now tracking {len(processing)} document(s)…")
+            _poll_until_settled(auth, project_id, items, processing, interval, timeout,
+                                count_ph, table_ph, progress_ph, log_ph, "Tracking")
 
     _render_status(items, count_ph, table_ph, progress_ph)
     counts = _counts(items)
@@ -253,9 +278,55 @@ def main():
     st.title("Bulk Upload & Process Files")
     st.caption(
         "Upload a folder of documents and let the app upload them, request "
-        "processing, and wait for each batch to finish before starting the "
-        "next — so neither Streamlit nor the API is overwhelmed."
+        "processing, and track each document until it settles — in app-driven "
+        "batches, so neither Streamlit nor the API is overwhelmed."
     )
+
+    with st.expander("ℹ️  How to use this page (read me — especially for large sets)", expanded=False):
+        st.markdown(
+            """
+**What it does**, in order: authenticate → pick a project → drop in a folder →
+the app uploads each file (`POST /files`), requests processing
+(`POST /documents/process-file`), then polls until each document leaves
+`new`/`processing`.
+
+**It runs as one long, blocking job.** When you click **Start**, the whole run
+happens inside that click. The status table, counters and progress bar update
+**live** the entire time. The page won't respond to other clicks while it runs —
+use Streamlit's **Stop** button (top-right) to halt; click **Start** again to
+resume (nothing is re-uploaded).
+
+**⚠️ Keep this tab open and stop your computer from sleeping until it finishes.**
+If the tab closes, the machine sleeps, or the network drops, the run stops and
+the app *loses track of which files it already uploaded this session*. The
+documents already submitted keep processing on Hypatos (they're safe), but
+starting over would upload duplicates. For a 700-file run this can take a long
+time, so plan for the machine to stay awake (e.g. `caffeinate` on macOS, or
+disable sleep).
+
+**Two speed modes** (Step 4):
+- **Wait for each batch to finish** — uploads a batch, waits until all its
+  documents settle, then the next batch. Caps how many documents process at once
+  (≈ batch size). Safest for API concurrency, but the processing wait is paid
+  *once per batch*, so for many batches this is slow.
+- **Submit everything, then track** — uploads and requests processing for *all*
+  files first (still one at a time — no hammering), then waits for them together
+  **once**. Much faster wall-clock for large sets; more documents process
+  concurrently. Recommended for big folders unless you hit API limits.
+
+**Timeout** is how long a wait phase may run before it gives up and leaves the
+rest as `processing`. It is *not* data loss — click **Start** again to keep
+waiting. For big sets in "submit everything" mode, raise it (it covers the whole
+tracking phase).
+
+**Resumable & retryable:** progress is kept in this session. Re-running skips
+finished files and retries failed ones. **Reset progress** clears the tracking
+(use it before a genuinely new run).
+
+**Scopes required:** `files.write`, `documents.read`, `documents.write`, plus
+`projects.read` and `companies.read`.
+            """
+        )
 
     # Step 1 — credentials -------------------------------------------------
     st.header("1. Credentials")
@@ -314,10 +385,25 @@ def main():
     # Step 4 — batching settings ------------------------------------------
     st.divider()
     st.header("4. Batch settings")
+    mode = st.radio(
+        "How to wait for processing",
+        ["Submit everything, then track (faster for large sets)",
+         "Wait for each batch to finish before the next (caps concurrency)"],
+        key="bup_mode",
+        help="Processing is asynchronous. 'Submit everything, then track' pays the "
+             "long processing wait once instead of once per batch — much faster for "
+             "hundreds of files. 'Wait for each batch' keeps at most ~batch-size "
+             "documents processing at a time, which is safer if the company has "
+             "API concurrency limits.",
+    )
+    wait_per_batch = mode.startswith("Wait for each batch")
     c1, c2, c3 = st.columns(3)
     batch_size = c1.number_input("Files per batch", min_value=1, max_value=200, value=50, step=10, key="bup_batch_size")
     interval = c2.number_input("Poll interval (s)", min_value=2, max_value=60, value=5, step=1, key="bup_interval")
-    timeout = c3.number_input("Per-batch timeout (s)", min_value=30, max_value=7200, value=600, step=30, key="bup_timeout")
+    timeout_label = "Per-batch timeout (s)" if wait_per_batch else "Tracking timeout (s)"
+    timeout = c3.number_input(timeout_label, min_value=30, max_value=14400, value=600, step=30, key="bup_timeout",
+                              help="How long a wait phase may run before leaving the rest as "
+                                   "'processing'. Not data loss — click Start again to keep waiting.")
 
     # Step 5 — run ---------------------------------------------------------
     st.divider()
@@ -361,7 +447,7 @@ def main():
         else:
             _run(
                 auth, project_id, items, list(uploaded),
-                int(batch_size), int(interval), int(timeout),
+                int(batch_size), int(interval), int(timeout), wait_per_batch,
                 count_ph, table_ph, progress_ph, log_ph,
             )
 
