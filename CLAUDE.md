@@ -130,7 +130,15 @@ streamlit run Home.py
   `difflib.unified_diff`. `projectIds` are company-specific, so the copy page
   either drops them, keeps them (same-company only) or re-maps by project name,
   and the compare page excludes them from the comparison entirely (shown per
-  side for reference only).
+  side for reference only). The definition YAML itself also carries a
+  "duplicate projects" section whose project ids are company-specific; the
+  compare page parses the YAML (`yaml.safe_load`), structurally drops any
+  section matching a configurable name (default `duplicate projects`, matched
+  tolerantly via `_norm_key` against both mapping keys and a step's
+  name/title), then re-serialises both sides canonically (`safe_dump`,
+  `sort_keys=False`) so only meaningful content differences remain. It falls
+  back to the raw text diff if a side is not valid YAML, and shows exactly what
+  was excluded. Requires `pyyaml`.
 - The Export Configuration page (`exp_*`) links projects to artefacts by their
   native binding: each project's schema (`get_project_schema`) + config
   (`get_project_by_id`), enrichment workflows via `projectIds`, agent workflows

@@ -4,3 +4,4 @@ openpyxl
 deepdiff
 requests
 debugpy
+pyyaml
