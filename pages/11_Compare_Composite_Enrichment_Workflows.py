@@ -1,9 +1,90 @@
 import difflib
+import re
 
 import streamlit as st
+import yaml
 
 from auth import HypatosAPI
 from config import BASE_URL_EU, BASE_URL_US
+
+# The composite enrichment YAML definition contains a "duplicate projects"
+# section listing project ids. Project ids are unique per company, so that
+# section always differs across two companies and is not meaningful for drift
+# detection. We parse the YAML and structurally drop the section before diffing.
+_DEFAULT_EXCLUDED_SECTIONS = "duplicate projects"
+
+# Fields under which a step/section carries its human name in the definition.
+_NAME_FIELDS = ("name", "title", "step", "type", "id", "key", "label")
+
+
+def _norm_key(value) -> str:
+    """Normalise a key / name for tolerant matching: lower-case and strip every
+    non-alphanumeric char, so 'Duplicate Projects', 'duplicate_projects' and
+    'duplicateProjects' all collapse to the same token."""
+    return re.sub(r"[^a-z0-9]", "", str(value).lower())
+
+
+def _parse_targets(raw: str) -> set:
+    return {_norm_key(part) for part in (raw or "").split(",") if part.strip()}
+
+
+def _matches_section(node, targets: set) -> bool:
+    """True if a list item (a dict) is the section to exclude, matched by any of
+    its name-ish fields."""
+    if isinstance(node, dict):
+        for field in _NAME_FIELDS:
+            if field in node and _norm_key(node[field]) in targets:
+                return True
+    return False
+
+
+def _redact(node, targets: set, removed: list):
+    """Return a copy of the parsed YAML with any matching section removed —
+    both mapping keys named like the section and list items whose name matches.
+    Collects the removed sub-trees into `removed` for display."""
+    if isinstance(node, dict):
+        out = {}
+        for key, value in node.items():
+            if _norm_key(key) in targets:
+                removed.append({key: value})
+                continue
+            out[key] = _redact(value, targets, removed)
+        return out
+    if isinstance(node, list):
+        out = []
+        for item in node:
+            if _matches_section(item, targets):
+                removed.append(item)
+                continue
+            out.append(_redact(item, targets, removed))
+        return out
+    return node
+
+
+def _canonical_definition(text: str, targets: set):
+    """Parse a YAML definition, drop the excluded section(s), and re-serialise
+    canonically so both sides are formatted identically for the diff.
+
+    Returns (display_text, parsed_ok, removed_list). On a parse failure the raw
+    text is returned unchanged with parsed_ok=False so the caller can fall back
+    to a plain text diff."""
+    text = text or ""
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return text, False, []
+    if data is None:
+        return text, True, []
+    removed: list = []
+    data = _redact(data, targets, removed)
+    dumped = yaml.safe_dump(
+        data,
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
+        width=1000,
+    )
+    return dumped, True, removed
 
 st.set_page_config(page_title="Compare Composite Enrichment Workflows", layout="wide")
 st.title("Compare Composite Enrichment Workflows")
@@ -228,15 +309,63 @@ b_full = st.session_state["ccew_b_full"]
 # ---------------------------------------------------------------------------
 st.header("Step 3: Comparison")
 
-a_def = a_full.get("definition") or ""
-b_def = b_full.get("definition") or ""
+a_def_raw = a_full.get("definition") or ""
+b_def_raw = b_full.get("definition") or ""
+
+exclude_section = st.checkbox(
+    "Exclude the “duplicate projects” section from the definition diff",
+    value=True,
+    key="ccew_exclude",
+    help=(
+        "The YAML definition holds a section listing project ids for duplication. "
+        "Project ids are unique per company, so this section always differs across "
+        "two companies and is not real drift. With this on, the section is parsed "
+        "out of both definitions before diffing."
+    ),
+)
+section_input = st.text_input(
+    "Section name(s) to exclude (comma-separated)",
+    value=_DEFAULT_EXCLUDED_SECTIONS,
+    key="ccew_section_names",
+    disabled=not exclude_section,
+    help=(
+        "Matched case-insensitively and ignoring spaces / underscores / hyphens, "
+        "against both mapping keys and a step's name/title. Adjust if your "
+        "definition labels the section differently."
+    ),
+)
+targets = _parse_targets(section_input) if exclude_section else set()
+
+# Prepare the definition text used for the verdict and the diff. When excluding,
+# both sides are parsed, the section dropped, and re-serialised identically so
+# only meaningful content differences remain. If either side is not valid YAML,
+# fall back to the raw text diff (nothing excluded).
+normalised = False
+removed_a: list = []
+removed_b: list = []
+if exclude_section and targets:
+    a_disp, a_ok, removed_a = _canonical_definition(a_def_raw, targets)
+    b_disp, b_ok, removed_b = _canonical_definition(b_def_raw, targets)
+    if a_ok and b_ok:
+        normalised = True
+    else:
+        a_disp, b_disp = a_def_raw, b_def_raw
+        st.warning(
+            "One or both definitions are not valid YAML, so the section could not "
+            "be excluded — showing the raw definition diff instead."
+        )
+else:
+    a_disp, b_disp = a_def_raw, b_def_raw
 
 if (
-    a_def == b_def
+    a_disp == b_disp
     and (a_full.get("name") or "") == (b_full.get("name") or "")
     and (a_full.get("description") or "") == (b_full.get("description") or "")
 ):
-    st.success("✅ The two workflows are identical (name, description and definition).")
+    st.success(
+        "✅ The two workflows are identical (name, description and definition"
+        + (", excluding the duplicate-projects section)." if normalised else ").")
+    )
 else:
     st.warning("❗️ The two workflows differ. See the field-by-field comparison below.")
 
@@ -245,6 +374,39 @@ st.caption(
     "company, so they always differ and are not meaningful for drift detection. They are "
     "omitted from the comparison entirely (still visible in each side's *Full JSON* below)."
 )
+
+if normalised:
+    if removed_a or removed_b:
+        st.caption(
+            f"Excluded the **{section_input.strip()}** section before diffing "
+            f"(removed {len(removed_a)} from A, {len(removed_b)} from B). The "
+            "definition below is re-serialised YAML, so comments and exact "
+            "formatting are normalised, not compared."
+        )
+        with st.expander("What was excluded"):
+            col_x, col_y = st.columns(2)
+            with col_x:
+                st.markdown("**A**")
+                st.code(
+                    yaml.safe_dump(removed_a, sort_keys=False, allow_unicode=True)
+                    if removed_a
+                    else "(nothing matched)",
+                    language="yaml",
+                )
+            with col_y:
+                st.markdown("**B**")
+                st.code(
+                    yaml.safe_dump(removed_b, sort_keys=False, allow_unicode=True)
+                    if removed_b
+                    else "(nothing matched)",
+                    language="yaml",
+                )
+    else:
+        st.caption(
+            f"No **{section_input.strip()}** section was found in either definition — "
+            "nothing was excluded. The definition below is re-serialised YAML "
+            "(comments and exact formatting normalised)."
+        )
 
 meta_a, meta_b = st.columns(2)
 with meta_a:
@@ -256,7 +418,11 @@ with meta_b:
 
 _text_diff(a_full.get("name"), b_full.get("name"), "Name")
 _text_diff(a_full.get("description"), b_full.get("description"), "Description")
-_text_diff(a_def, b_def, "Definition (YAML)")
+_text_diff(
+    a_disp,
+    b_disp,
+    "Definition (YAML, duplicate-projects excluded)" if normalised else "Definition (YAML)",
+)
 
 with st.expander("Full A JSON"):
     st.json(a_full)
