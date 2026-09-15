@@ -1,4 +1,5 @@
 import difflib
+import html
 import json
 import re
 
@@ -117,17 +118,142 @@ st.success(
     + ("  ·  *same company*" if same_company else "")
 )
 
+# Prompts frequently differ only in whitespace (e.g. an extra space in a
+# Markdown table row), which an exact line diff flags as a change. Let the user
+# choose how whitespace is treated in every text/prompt diff on this page.
+_WS_MODE_OPTIONS = [
+    "Highlight changes (show whitespace)",
+    "Ignore whitespace",
+    "Exact (character-for-character)",
+]
+st.radio(
+    "Whitespace handling in prompt / text diffs",
+    _WS_MODE_OPTIONS,
+    key="cmp_ws_mode",
+    horizontal=True,
+    help=(
+        "**Highlight** shows every change inline and makes spaces (·) and tabs "
+        "(⇥) visible, so a whitespace-only edit is obvious and you can see "
+        "exactly where it is. **Ignore whitespace** collapses runs of whitespace "
+        "before diffing, so whitespace-only edits disappear from the diff. "
+        "**Exact** compares character-for-character (the strictest)."
+    ),
+)
+
 
 # ---------------------------------------------------------------------------
 # Shared diff helpers
 # ---------------------------------------------------------------------------
+def _norm_ws(line: str) -> str:
+    """Collapse internal whitespace runs to a single space and strip the ends,
+    so lines that differ only in spacing compare equal."""
+    return re.sub(r"\s+", " ", line).strip()
+
+
+def _same_ignoring_ws(text_a: str, text_b: str) -> bool:
+    return (
+        [_norm_ws(l) for l in text_a.splitlines()]
+        == [_norm_ws(l) for l in text_b.splitlines()]
+    )
+
+
+_DEL_STYLE = (
+    "background:#ffd7d5;color:#82071e;text-decoration:line-through;border-radius:2px;"
+)
+_INS_STYLE = "background:#c6f0cd;color:#0a5d1f;border-radius:2px;"
+
+
+def _vis_ws(s: str) -> str:
+    """HTML-escape a string and make whitespace visible (space → ·, tab → ⇥)."""
+    return html.escape(s).replace(" ", "·").replace("\t", "⇥")
+
+
+def _inline_char_diff(text_a: str, text_b: str) -> str:
+    """Character-level diff of two strings as inline HTML: text present only in
+    A is struck through in red, text only in B is green, and whitespace inside a
+    change is made visible so a lone extra space is obvious."""
+    sm = difflib.SequenceMatcher(None, text_a, text_b, autojunk=False)
+    parts = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            parts.append(html.escape(text_a[i1:i2]))
+            continue
+        if i2 > i1:
+            parts.append(f'<span style="{_DEL_STYLE}">{_vis_ws(text_a[i1:i2])}</span>')
+        if j2 > j1:
+            parts.append(f'<span style="{_INS_STYLE}">{_vis_ws(text_b[j1:j2])}</span>')
+    return "".join(parts)
+
+
+def _render_char_highlight(text_a: str, text_b: str):
+    body = _inline_char_diff(text_a, text_b)
+    st.markdown(
+        '<pre style="white-space:pre-wrap;word-break:break-word;'
+        "font-family:monospace;font-size:0.8rem;line-height:1.5;padding:0.75rem;"
+        "border:1px solid rgba(128,128,128,0.35);border-radius:4px;"
+        f'overflow-x:auto;">{body}</pre>',
+        unsafe_allow_html=True,
+    )
+    st.caption("Legend: red = only in A · green = only in B · `·` = space · `⇥` = tab")
+
+
+def _raw_expanders(text_a: str, text_b: str):
+    col_l, col_r = st.columns(2)
+    with col_l:
+        with st.expander("A · raw"):
+            st.code(text_a or "(empty)", language="text")
+    with col_r:
+        with st.expander("B · raw"):
+            st.code(text_b or "(empty)", language="text")
+
+
+def _text_differs(text_a: str, text_b: str) -> bool:
+    """Whether two texts differ under the current whitespace mode. In 'Ignore
+    whitespace' mode a whitespace-only difference does not count; otherwise the
+    comparison is exact."""
+    text_a = text_a or ""
+    text_b = text_b or ""
+    mode = st.session_state.get("cmp_ws_mode", _WS_MODE_OPTIONS[0])
+    if mode.startswith("Ignore"):
+        return not _same_ignoring_ws(text_a, text_b)
+    return text_a != text_b
+
+
 def _text_diff(text_a: str, text_b: str, label: str):
     st.markdown(f"### {label}")
     text_a = text_a or ""
     text_b = text_b or ""
+    mode = st.session_state.get("cmp_ws_mode", _WS_MODE_OPTIONS[0])
+
     if text_a == text_b:
         st.success("Identical")
-    else:
+        _raw_expanders(text_a, text_b)
+        return
+
+    # Whatever the mode, tell the user upfront when the only delta is whitespace —
+    # that is the case that otherwise looks like a "phantom" difference.
+    if _same_ignoring_ws(text_a, text_b):
+        st.info("The only differences here are whitespace.")
+
+    if mode.startswith("Ignore"):
+        a_norm = [_norm_ws(l) for l in text_a.splitlines()]
+        b_norm = [_norm_ws(l) for l in text_b.splitlines()]
+        if a_norm == b_norm:
+            st.success("No differences once whitespace is ignored.")
+        else:
+            diff = list(
+                difflib.unified_diff(
+                    a_norm, b_norm, fromfile="A", tofile="B", lineterm="", n=3
+                )
+            )
+            st.code("\n".join(diff), language="diff")
+            st.caption(
+                "Whitespace was collapsed before diffing — only non-whitespace "
+                "changes are shown."
+            )
+    elif mode.startswith("Highlight"):
+        _render_char_highlight(text_a, text_b)
+    else:  # Exact
         diff = list(
             difflib.unified_diff(
                 text_a.splitlines(),
@@ -142,13 +268,8 @@ def _text_diff(text_a: str, text_b: str, label: str):
             st.code("\n".join(diff), language="diff")
         else:
             st.info("No line-level differences (whitespace or ordering only).")
-    col_l, col_r = st.columns(2)
-    with col_l:
-        with st.expander("A · raw"):
-            st.code(text_a or "(empty)", language="text")
-    with col_r:
-        with st.expander("B · raw"):
-            st.code(text_b or "(empty)", language="text")
+
+    _raw_expanders(text_a, text_b)
 
 
 def _json_diff(obj_a, obj_b, label: str):
@@ -493,8 +614,8 @@ else:
                 a_full = pair.get("a") or {}
                 b_full = pair.get("b") or {}
                 fields = {
-                    "prompt": a_full.get("prompt") != b_full.get("prompt"),
-                    "systemPrompt": a_full.get("systemPrompt") != b_full.get("systemPrompt"),
+                    "prompt": _text_differs(a_full.get("prompt"), b_full.get("prompt")),
+                    "systemPrompt": _text_differs(a_full.get("systemPrompt"), b_full.get("systemPrompt")),
                     "outputFormat": a_full.get("outputFormat") != b_full.get("outputFormat"),
                     "configuration": a_full.get("configuration") != b_full.get("configuration"),
                     "model": a_full.get("model") != b_full.get("model"),
@@ -515,8 +636,8 @@ else:
                 a_full = pair.get("a") or {}
                 b_full = pair.get("b") or {}
                 differs_here = any([
-                    a_full.get("prompt") != b_full.get("prompt"),
-                    a_full.get("systemPrompt") != b_full.get("systemPrompt"),
+                    _text_differs(a_full.get("prompt"), b_full.get("prompt")),
+                    _text_differs(a_full.get("systemPrompt"), b_full.get("systemPrompt")),
                     a_full.get("outputFormat") != b_full.get("outputFormat"),
                     a_full.get("configuration") != b_full.get("configuration"),
                     a_full.get("model") != b_full.get("model"),
