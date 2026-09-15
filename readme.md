@@ -34,10 +34,11 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
 - **Compare composite enrichment workflows** — side-by-side, line-level diff of
   two enrichment workflow definitions plus their name and description. Project
   bindings (`projectIds`) are excluded, since the ids are unique per company and
-  always differ. The definition YAML's own *duplicate projects* section (also
-  company-specific project ids) is parsed out of both sides before diffing, so
-  it no longer shows as phantom drift — configurable, with a view of exactly
-  what was excluded. Purpose-built for spotting prod-vs-test drift.
+  always differ. The definition YAML's own `duplicate_projects` section (also
+  company-specific project ids) is masked out of both sides before diffing, so
+  it no longer shows as phantom drift — configurable, and everything else stays
+  exactly as written, with a view of what was excluded. Purpose-built for
+  spotting prod-vs-test drift.
 - **Export configuration as Markdown** — pick a company and a set of projects
   and download a ZIP of Markdown files documenting their configuration: each
   project's schema and config, the composite enrichment workflow(s), the dynamic

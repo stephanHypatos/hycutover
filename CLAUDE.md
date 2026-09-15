@@ -131,14 +131,19 @@ streamlit run Home.py
   either drops them, keeps them (same-company only) or re-maps by project name,
   and the compare page excludes them from the comparison entirely (shown per
   side for reference only). The definition YAML itself also carries a
-  "duplicate projects" section whose project ids are company-specific; the
-  compare page parses the YAML (`yaml.safe_load`), structurally drops any
-  section matching a configurable name (default `duplicate projects`, matched
-  tolerantly via `_norm_key` against both mapping keys and a step's
-  name/title), then re-serialises both sides canonically (`safe_dump`,
-  `sort_keys=False`) so only meaningful content differences remain. It falls
-  back to the raw text diff if a side is not valid YAML, and shows exactly what
-  was excluded. Requires `pyyaml`.
+  `duplicate_projects` section (`- name: duplicate_projects` with a `value:`
+  list of project ids) whose ids are company-specific; the compare page masks
+  that block out of both definitions before diffing (`_strip_section_raw`).
+  Masking is done on the raw text by indentation — find the header line
+  (`_is_section_header`, matching a configurable name tolerantly via `_norm_key`
+  against both a mapping key and a step's name/title; default `duplicate
+  projects`, which also matches `duplicate_projects`), consume every following
+  line indented deeper than it, and replace the block with a placeholder line.
+  Raw masking (not `yaml.safe_load`/`safe_dump`) is deliberate: real definitions
+  are not always strict, round-trippable YAML, and this keeps everything except
+  the one block byte-for-byte (comments included) so nothing else is normalised
+  away. The verdict, the identical/differ banner and the definition diff all use
+  the masked text; a "What was excluded" expander shows the removed block(s).
 - The Export Configuration page (`exp_*`) links projects to artefacts by their
   native binding: each project's schema (`get_project_schema`) + config
   (`get_project_by_id`), enrichment workflows via `projectIds`, agent workflows

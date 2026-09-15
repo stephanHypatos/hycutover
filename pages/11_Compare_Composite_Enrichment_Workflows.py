@@ -2,19 +2,33 @@ import difflib
 import re
 
 import streamlit as st
-import yaml
 
 from auth import HypatosAPI
 from config import BASE_URL_EU, BASE_URL_US
 
 # The composite enrichment YAML definition contains a "duplicate projects"
-# section listing project ids. Project ids are unique per company, so that
-# section always differs across two companies and is not meaningful for drift
-# detection. We parse the YAML and structurally drop the section before diffing.
+# section listing project ids, e.g.:
+#
+#   - name: duplicate_projects   # projects searched during duplicate check
+#     value:
+#       - 6a7f0b878c0fcfcc4fb8f65c   # Project A
+#       - 6a7f0b8c0fe8803b0da45581   # Project B
+#
+# Project ids are unique per company, so that section always differs across two
+# companies and is not meaningful for drift detection. We mask the block out of
+# both definitions before diffing. This is done on the raw text (by
+# indentation), not by parsing the whole document, because real definitions are
+# not always strict, round-trippable YAML — text masking removes only the one
+# block and leaves everything else (comments included) byte-for-byte.
 _DEFAULT_EXCLUDED_SECTIONS = "duplicate projects"
 
 # Fields under which a step/section carries its human name in the definition.
 _NAME_FIELDS = ("name", "title", "step", "type", "id", "key", "label")
+_NAME_FIELD_KEYS = {re.sub(r"[^a-z0-9]", "", f) for f in _NAME_FIELDS}
+
+_PLACEHOLDER = (
+    "# ⟨excluded from comparison: duplicate_projects — company-specific project ids⟩"
+)
 
 
 def _norm_key(value) -> str:
@@ -28,63 +42,74 @@ def _parse_targets(raw: str) -> set:
     return {_norm_key(part) for part in (raw or "").split(",") if part.strip()}
 
 
-def _matches_section(node, targets: set) -> bool:
-    """True if a list item (a dict) is the section to exclude, matched by any of
-    its name-ish fields."""
-    if isinstance(node, dict):
-        for field in _NAME_FIELDS:
-            if field in node and _norm_key(node[field]) in targets:
-                return True
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" \t"))
+
+
+def _is_section_header(stripped: str, targets: set) -> bool:
+    """Whether a stripped line introduces the section to exclude. Handles a list
+    item named via a name-ish field ('- name: duplicate_projects'), and the
+    section as a mapping key, bare or as a list item ('duplicate_projects:',
+    '- duplicate_projects:')."""
+    if not targets:
+        return False
+    # "- name: duplicate_projects"  (name-ish field carrying the section name)
+    m = re.match(r"-\s+([^:#]+?):\s*(.*)$", stripped)
+    if m and _norm_key(m.group(1)) in _NAME_FIELD_KEYS:
+        value = m.group(2).split("#", 1)[0].strip()
+        if _norm_key(value) in targets:
+            return True
+    # "duplicate_projects:" or "- duplicate_projects:"  (the section as a key)
+    is_item = stripped.startswith("-")
+    body = stripped[1:].lstrip() if is_item else stripped
+    m2 = re.match(r"([^:#]+?):\s*", body)
+    if m2 and _norm_key(m2.group(1)) in targets:
+        return True
     return False
 
 
-def _redact(node, targets: set, removed: list):
-    """Return a copy of the parsed YAML with any matching section removed —
-    both mapping keys named like the section and list items whose name matches.
-    Collects the removed sub-trees into `removed` for display."""
-    if isinstance(node, dict):
-        out = {}
-        for key, value in node.items():
-            if _norm_key(key) in targets:
-                removed.append({key: value})
-                continue
-            out[key] = _redact(value, targets, removed)
-        return out
-    if isinstance(node, list):
-        out = []
-        for item in node:
-            if _matches_section(item, targets):
-                removed.append(item)
-                continue
-            out.append(_redact(item, targets, removed))
-        return out
-    return node
+def _strip_section_raw(text: str, targets: set):
+    """Mask the excluded section(s) out of the raw definition text by
+    indentation: replace the header line and its (more-indented) body with a
+    single placeholder line, so the section contributes nothing to the diff.
 
-
-def _canonical_definition(text: str, targets: set):
-    """Parse a YAML definition, drop the excluded section(s), and re-serialise
-    canonically so both sides are formatted identically for the diff.
-
-    Returns (display_text, parsed_ok, removed_list). On a parse failure the raw
-    text is returned unchanged with parsed_ok=False so the caller can fall back
-    to a plain text diff."""
+    Returns (masked_text, removed_blocks) where removed_blocks is a list of the
+    original text of each removed block, for display."""
     text = text or ""
-    try:
-        data = yaml.safe_load(text)
-    except yaml.YAMLError:
-        return text, False, []
-    if data is None:
-        return text, True, []
+    lines = text.split("\n")
+    out: list = []
     removed: list = []
-    data = _redact(data, targets, removed)
-    dumped = yaml.safe_dump(
-        data,
-        sort_keys=False,
-        default_flow_style=False,
-        allow_unicode=True,
-        width=1000,
-    )
-    return dumped, True, removed
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        if _is_section_header(line.strip(), targets):
+            base = _indent(line)
+            block = [line]
+            i += 1
+            # Consume the body: every following line indented deeper than the
+            # header. Blank lines are kept only when a deeper line still follows.
+            while i < n:
+                nxt = lines[i]
+                if nxt.strip() == "":
+                    j = i
+                    while j < n and lines[j].strip() == "":
+                        j += 1
+                    if j < n and _indent(lines[j]) > base:
+                        block.extend(lines[i:j])
+                        i = j
+                        continue
+                    break
+                if _indent(nxt) > base:
+                    block.append(nxt)
+                    i += 1
+                else:
+                    break
+            removed.append("\n".join(block))
+            out.append(" " * base + _PLACEHOLDER)
+        else:
+            out.append(line)
+            i += 1
+    return "\n".join(out), removed
 
 st.set_page_config(page_title="Compare Composite Enrichment Workflows", layout="wide")
 st.title("Compare Composite Enrichment Workflows")
@@ -317,10 +342,11 @@ exclude_section = st.checkbox(
     value=True,
     key="ccew_exclude",
     help=(
-        "The YAML definition holds a section listing project ids for duplication. "
-        "Project ids are unique per company, so this section always differs across "
-        "two companies and is not real drift. With this on, the section is parsed "
-        "out of both definitions before diffing."
+        "The YAML definition holds a `duplicate_projects` section listing project "
+        "ids. Project ids are unique per company, so this section always differs "
+        "across two companies and is not real drift. With this on, the block is "
+        "masked out of both definitions before diffing (everything else, comments "
+        "included, is left untouched)."
     ),
 )
 section_input = st.text_input(
@@ -330,30 +356,22 @@ section_input = st.text_input(
     disabled=not exclude_section,
     help=(
         "Matched case-insensitively and ignoring spaces / underscores / hyphens, "
-        "against both mapping keys and a step's name/title. Adjust if your "
+        "against both a mapping key and a step's name/title. So the default "
+        "`duplicate projects` also matches `duplicate_projects`. Adjust if your "
         "definition labels the section differently."
     ),
 )
 targets = _parse_targets(section_input) if exclude_section else set()
 
-# Prepare the definition text used for the verdict and the diff. When excluding,
-# both sides are parsed, the section dropped, and re-serialised identically so
-# only meaningful content differences remain. If either side is not valid YAML,
-# fall back to the raw text diff (nothing excluded).
-normalised = False
+# Mask the excluded section out of the raw definition text on both sides. Raw
+# masking (rather than parsing the whole YAML) keeps the rest of the diff
+# byte-for-byte, and works even when the definition is not strict YAML.
+excluded = bool(exclude_section and targets)
 removed_a: list = []
 removed_b: list = []
-if exclude_section and targets:
-    a_disp, a_ok, removed_a = _canonical_definition(a_def_raw, targets)
-    b_disp, b_ok, removed_b = _canonical_definition(b_def_raw, targets)
-    if a_ok and b_ok:
-        normalised = True
-    else:
-        a_disp, b_disp = a_def_raw, b_def_raw
-        st.warning(
-            "One or both definitions are not valid YAML, so the section could not "
-            "be excluded — showing the raw definition diff instead."
-        )
+if excluded:
+    a_disp, removed_a = _strip_section_raw(a_def_raw, targets)
+    b_disp, removed_b = _strip_section_raw(b_def_raw, targets)
 else:
     a_disp, b_disp = a_def_raw, b_def_raw
 
@@ -364,7 +382,7 @@ if (
 ):
     st.success(
         "✅ The two workflows are identical (name, description and definition"
-        + (", excluding the duplicate-projects section)." if normalised else ").")
+        + (", excluding the duplicate-projects section)." if excluded else ").")
     )
 else:
     st.warning("❗️ The two workflows differ. See the field-by-field comparison below.")
@@ -375,37 +393,25 @@ st.caption(
     "omitted from the comparison entirely (still visible in each side's *Full JSON* below)."
 )
 
-if normalised:
+if excluded:
     if removed_a or removed_b:
         st.caption(
-            f"Excluded the **{section_input.strip()}** section before diffing "
-            f"(removed {len(removed_a)} from A, {len(removed_b)} from B). The "
-            "definition below is re-serialised YAML, so comments and exact "
-            "formatting are normalised, not compared."
+            f"Masked the **{section_input.strip()}** section out of the definition "
+            f"before diffing (removed {len(removed_a)} block(s) from A, "
+            f"{len(removed_b)} from B). Everything else is compared as-is."
         )
         with st.expander("What was excluded"):
             col_x, col_y = st.columns(2)
             with col_x:
                 st.markdown("**A**")
-                st.code(
-                    yaml.safe_dump(removed_a, sort_keys=False, allow_unicode=True)
-                    if removed_a
-                    else "(nothing matched)",
-                    language="yaml",
-                )
+                st.code("\n\n".join(removed_a) or "(nothing matched)", language="yaml")
             with col_y:
                 st.markdown("**B**")
-                st.code(
-                    yaml.safe_dump(removed_b, sort_keys=False, allow_unicode=True)
-                    if removed_b
-                    else "(nothing matched)",
-                    language="yaml",
-                )
+                st.code("\n\n".join(removed_b) or "(nothing matched)", language="yaml")
     else:
         st.caption(
             f"No **{section_input.strip()}** section was found in either definition — "
-            "nothing was excluded. The definition below is re-serialised YAML "
-            "(comments and exact formatting normalised)."
+            "nothing was excluded."
         )
 
 meta_a, meta_b = st.columns(2)
@@ -421,7 +427,7 @@ _text_diff(a_full.get("description"), b_full.get("description"), "Description")
 _text_diff(
     a_disp,
     b_disp,
-    "Definition (YAML, duplicate-projects excluded)" if normalised else "Definition (YAML)",
+    "Definition (YAML, duplicate-projects excluded)" if excluded else "Definition (YAML)",
 )
 
 with st.expander("Full A JSON"):
