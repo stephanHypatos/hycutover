@@ -106,6 +106,14 @@ streamlit run Home.py
 - `workflowConfiguration` references agents by UUID and by
   `name:version` string; the copy and compare pages scan for both when
   resolving referenced agents.
+- The Compare Agents & Workflows page (`cmp_*`) diffs prompts/text via
+  `_text_diff`, driven by a page-level whitespace mode (`cmp_ws_mode`):
+  "Highlight" renders a character-level inline HTML diff (`_inline_char_diff`)
+  with spaces/tabs made visible (`_vis_ws`); "Ignore whitespace" collapses runs
+  (`_norm_ws`) before diffing so whitespace-only edits vanish; "Exact" is the
+  strict line diff. `_text_differs` applies the same rule to the divergence
+  summary / icons so an agent that differs only in whitespace is not flagged as
+  changed in Ignore mode. A whitespace-only delta always shows an explicit note.
 - Project member access is the discriminated union
   `{"allow": "all"}` or `{"allow": "members", "members": [<userId>, ...]}`.
   `update_project_members()` PATCHes only that field. Switching a project

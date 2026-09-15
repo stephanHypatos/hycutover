@@ -20,6 +20,9 @@ Streamlit multi-page app for managing cutovers between two Hypatos companies
 - **Compare agents & workflows** — side-by-side diff of two agents' prompt /
   systemPrompt / outputFormat / configuration, or of two full workflows plus
   every agent they reference. Purpose-built for spotting prod-vs-test drift.
+  Prompt diffs offer a whitespace mode: *highlight* changes inline with spaces
+  and tabs made visible, *ignore whitespace* so whitespace-only edits (a common
+  false positive with Markdown tables) drop out of the diff, or *exact*.
 - **Manage project users** — inspect who has access to which projects, build
   ad-hoc user groups and assign (or remove) them across many projects in one
   go, resolving names / email addresses to user ids automatically.
