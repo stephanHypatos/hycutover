@@ -137,7 +137,14 @@ streamlit run Home.py
   overwhelmed. Per batch of `batch_size` (default 50): upload each file
   (`upload_file` → `POST /files`), request processing
   (`process_file_into_document` → `POST /documents/process-file`), then poll
-  until every document leaves `new`/`processing`. Polling is bulk: one/two
+  until every document leaves `new`/`processing`. Two modes (`wait_per_batch`):
+  "wait for each batch" polls a batch to completion before the next (caps
+  concurrency at ≈ batch size); "submit everything, then track" submits all
+  files first and polls once (far less wall-clock, since the async processing
+  wait is paid once, not per batch). The whole run is one blocking button
+  handler that streams live updates to `st.empty()` placeholders; closing the
+  tab / sleeping ends the session and loses the in-session id map (already
+  submitted documents still process server-side). Polling is bulk: one/two
   `list_documents(states=["new","processing"])` calls per round match by
   documentId, and only a newly-settled doc costs a `get_document_by_id` for its
   final state; a doc reported settled but not yet indexed is re-confirmed and
