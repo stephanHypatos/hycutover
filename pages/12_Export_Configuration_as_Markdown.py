@@ -94,7 +94,7 @@ with col_reset_r:
 # ---------------------------------------------------------------------------
 st.header("Step 1: Credentials")
 st.markdown(
-    "One company only. Required scopes: `projects.read`, `agents.read`, "
+    "One company only. Required scopes: `projects.read`, `agents.read`, `agent-workflow.read` "
     "`enrichment-workflows.read` and `routings.read`."
 )
 
